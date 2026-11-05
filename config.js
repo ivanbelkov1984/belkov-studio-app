@@ -9,5 +9,7 @@ export const CONFIG = {
   // Публичные ссылки для «Поделиться»
   appTelegram: 'https://t.me/BelkovSMM_bot',
   appMax: 'https://max.ru/se14910384_1_bot',
+  channelTelegram: 'https://t.me/belkovstudio',
+  channelMax: 'https://max.ru/se14910384_biz',
   appWeb: 'https://ivanbelkov1984.github.io/belkov-studio-app/',
 };
