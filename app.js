@@ -196,9 +196,10 @@ function faq() {
 
 function legal(kind) {
   const items = L[kind] || [];
-  view.innerHTML = `${backBtn()}<p class="eyebrow">Документы</p><h1>${kind === 'privacy' ? 'Политика обработки персональных данных' : 'Условия работы'}</h1><p class="meta">Редакция от ${esc(L.updated)}</p>
+  const titles = { privacy: 'Политика обработки персональных данных', terms: 'Условия работы', consent: 'Согласие на обработку персональных данных' };
+  view.innerHTML = `${backBtn()}<p class="eyebrow">Документы</p><h1>${titles[kind]}</h1><p class="meta">Редакция от ${esc(L.updated)}</p>
     <div class="grid" style="margin-top:12px">${items.map(([h, t]) => `<div class="card"><h3>${esc(h)}</h3><p class="meta">${esc(t)}</p></div>`).join('')}</div>
-    <div class="actions"><a class="btn btn-wide" href="#/${kind === 'privacy' ? 'terms' : 'privacy'}">${kind === 'privacy' ? 'Условия работы' : 'Политика обработки данных'} ${ic('arrow')}</a></div>`;
+    <div class="actions"><a class="btn btn-wide" href="#/${kind === 'privacy' ? 'consent' : 'privacy'}">${kind === 'privacy' ? 'Согласие на обработку' : 'Политика обработки данных'} ${ic('arrow')}</a></div>`;
   setMain(null);
 }
 function docs() {
@@ -210,6 +211,7 @@ function docs() {
   view.innerHTML = `${backBtn()}<p class="eyebrow">Документы</p><h1>Как мы оформляем работу</h1><p class="meta">Работаем по договору. По каждому платежу — чек самозанятого из «Мой налог». Шаблоны можно скачать и показать юристу заранее; итоговый текст согласуем перед подписанием.</p>
     <div class="grid" style="margin-top:12px">${files.map(([h, t, f]) => `<div class="card"><h3>${esc(h)}</h3><p class="meta">${esc(t)}</p><div class="actions"><button class="btn btn-wide" type="button" data-link="${esc(base + f)}">Скачать .docx ${ic('out')}</button></div></div>`).join('')}
     <a class="card" href="#/terms"><h3>Условия работы</h3><p class="meta">Цены, сроки, оплата, что не входит в стоимость.</p></a>
+    <a class="card" href="#/consent"><h3>Согласие на обработку персональных данных</h3><p class="meta">Отдельный документ: цель, данные, срок, как отозвать.</p></a>
     <a class="card" href="#/privacy"><h3>Политика обработки персональных данных</h3><p class="meta">Какие данные, зачем и как отозвать согласие (152-ФЗ).</p></a></div>${footer()}`;
   setMain(null);
 }
@@ -234,7 +236,7 @@ function brief() {
       <div class="field"><label for="b-budget">Бюджет</label><select id="b-budget" name="budget">${['Выбрать диапазон', 'до 50 000 ₽', '50–100 тыс. ₽', '100–200 тыс. ₽', 'более 200 тыс. ₽'].map(o => `<option${o === b.budget ? ' selected' : ''}>${o}</option>`).join('')}</select></div>
       <div class="field"><label for="b-when">Когда нужно</label><select id="b-when" name="when">${['Пока без точной даты', 'В этом месяце', 'Срочно'].map(o => `<option${o === b.when ? ' selected' : ''}>${o}</option>`).join('')}</select></div>
       ${b.calc ? `<div class="card"><p class="eyebrow" style="margin:0 0 4px">Расчёт из калькулятора</p><p class="meta">${esc(b.calc)}</p></div>` : ''}
-      <label class="consent"><input type="checkbox" id="b-ok" name="ok" aria-describedby="b-ok-err"${b.ok ? ' checked' : ''}><span>Согласен на обработку персональных данных по <a href="#/privacy">Политике</a> для ответа на заявку</span></label>
+      <label class="consent"><input type="checkbox" id="b-ok" name="ok" aria-describedby="b-ok-err"${b.ok ? ' checked' : ''}><span>Даю <a href="#/consent">согласие на обработку персональных данных</a> для ответа на заявку; с <a href="#/privacy">Политикой</a> ознакомлен(а)</span></label>
       <span class="err" id="b-ok-err" role="alert" hidden>Нужно согласие, чтобы мы могли ответить.</span>
     </form>
     <p class="note">Приложение не хранит данные на сервере: текст заявки вы отправляете сами в чат студии.</p>
@@ -284,14 +286,14 @@ function route() {
   const [a, b] = (location.hash || '#/').slice(2).split('/');
   const tab = ({ services: 'services', solutions: 'solutions', cases: 'cases', brief: 'brief', calc: 'services' })[a] || (a === 'faq' ? 'home' : 'home');
   document.querySelectorAll('.tabs a').forEach(x => x.dataset.tab === tab ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current'));
-  const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'privacy', 'terms', 'docs'].includes(a);
+  const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'privacy', 'terms', 'consent', 'docs'].includes(a);
   setBack(deep ? () => back() : null);
   if (a === 'services') b ? service(b) : services();
   else if (a === 'solutions') solutions();
   else if (a === 'cases') b ? caseScreen(b) : cases();
   else if (a === 'calc') calc();
   else if (a === 'faq') faq();
-  else if (a === 'privacy' || a === 'terms') legal(a);
+  else if (a === 'privacy' || a === 'terms' || a === 'consent') legal(a);
   else if (a === 'docs') docs();
   else if (a === 'brief') brief();
   else home();
