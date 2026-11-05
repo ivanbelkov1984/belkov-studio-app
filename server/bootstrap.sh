@@ -5,7 +5,7 @@
 set -euo pipefail
 
 DOMAIN="${1:?домен, например aiservicesrus.ru}"
-EMAIL="${2:?e-mail для Let's Encrypt}"
+EMAIL="${2:?e-mail для сертификатов}"
 DEPLOY_USER="deploy"
 PUBKEY_FILE="${3:-/root/.ssh/authorized_keys}"   # ключ берём тот же, что у root
 
