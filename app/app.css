@@ -1,5 +1,7 @@
 /* Студия Белькова — дизайн A «Product Glow» (tokens.json, 05.11.2026) */
 @font-face { font-family: Inter; src: url(fonts/inter-cyrillic.woff2) format('woff2'); unicode-range: U+0400-04FF; font-weight: 100 900; font-display: swap; }
+@font-face { font-family: Manrope; src: url(fonts/manrope-cyrillic.woff2) format('woff2'); unicode-range: U+0400-04FF; font-weight: 200 800; font-display: swap; }
+@font-face { font-family: Manrope; src: url(fonts/manrope-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+2000-206F, U+20AC, U+20BD, U+2190-21FF; font-weight: 200 800; font-display: swap; }
 @font-face { font-family: Inter; src: url(fonts/inter-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+2000-206F, U+20AC, U+20BD, U+2190-21FF; font-weight: 100 900; font-display: swap; }
 
 :root {
@@ -8,7 +10,7 @@
   --hero-a: #2A2550; --hero-b: #13332F;
   --r-chip: 100px; --r-btn: 16px; --r-card: 20px; --r-hero: 26px; --shadow: 0 12px 36px rgba(0,0,0,.16);
   --tabs-h: 64px; --dock-h: 52px;
-  --head: Inter, 'Inter Display', Arial, sans-serif; --body: Inter, Arial, sans-serif;
+  --head: Manrope, Inter, Arial, sans-serif; --body: Inter, Arial, sans-serif;
 }
 :root[data-theme="light"] {
   --bg: #F6F6FB; --surface: #FFFFFF; --surface2: #F0EFFB; --stroke: #D9DDEA; --text: #191B2B; --muted: #505969;
@@ -31,7 +33,7 @@ html[data-platform="telegram"] .app { padding-bottom: calc(var(--tabs-h) + env(s
 
 /* Шапка */
 .top { display: flex; align-items: center; gap: 12px; padding: 14px 16px 8px; }
-.logo { width: 44px; height: 44px; border-radius: 12px; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font: 800 22px/1 var(--head); letter-spacing: -.04em; flex: none; }
+.logo { width: 48px; height: 48px; border-radius: 50%; flex: none; display: block; box-shadow: 0 0 0 1px var(--stroke), 0 6px 18px rgba(30,120,255,.25); }
 .brand { display: grid; line-height: 1.2; }
 .brand b { font: 800 17px/1.2 var(--head); letter-spacing: -.02em; }
 .brand span { font-size: 13px; color: var(--muted); }
@@ -169,3 +171,15 @@ details.faq p { margin: 0; padding: 0 16px 16px; color: var(--muted); }
 .toast { position: fixed; left: 16px; right: 16px; bottom: calc(var(--tabs-h) + var(--dock-h) + 36px); max-width: 600px; margin: 0 auto; background: var(--surface); color: var(--text); border: 1px solid var(--accent); border-radius: 14px; padding: 14px 16px; font-size: 14px; z-index: 30; box-shadow: var(--shadow); }
 img { max-width: 100%; }
 @media (prefers-reduced-motion: no-preference) { .btn, .chip, .opt { transition: transform .12s ease, background .15s; } .btn:active, .chip:active, .opt:active { transform: scale(.98); } }
+
+/* Галерея кейса, документы, согласие */
+.gallery { gap: 12px; padding-bottom: 4px; }
+.shot { flex: none; width: 160px; padding: 0; border: 0; background: none; color: var(--text); text-align: left; cursor: zoom-in; font: inherit; }
+.shot img { width: 160px; height: auto; border-radius: 18px; border: 1px solid var(--stroke); display: block; box-shadow: var(--shadow); }
+.shot span { display: block; font-size: 13px; color: var(--muted); margin-top: 6px; }
+.zoom { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 96dvh; }
+.zoom::backdrop { background: rgba(0,0,0,.8); }
+.zoom img { max-height: 86dvh; width: auto; border-radius: 20px; display: block; margin: 0 auto; }
+.zoom p { color: #fff; text-align: center; font-size: 14px; }
+.consent { display: flex; gap: 12px; align-items: flex-start; font-size: 14px; color: var(--muted); }
+.consent input { width: 22px; height: 22px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }

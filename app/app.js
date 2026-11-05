@@ -32,7 +32,7 @@ const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidd
 const checks = items => `<ul class="checks">${items.map(i => `<li>${ic('check')}<span>${esc(i)}</span></li>`).join('')}</ul>`;
 const tags = list => `<div class="tags">${list.map(p => `<span class="tag">${esc(p)}</span>`).join('')}</div>`;
 
-let D = {}, S = {}, PR = {};
+let D = {}, S = {}, PR = {}, L = {};
 const state = { dir: 'all', plat: 'all', calc: { step: 0, type: null, plat: null, feats: [], urg: null }, brief: {} };
 let src = '';
 
@@ -53,13 +53,14 @@ function readStart() {
 const svcById = id => S.services.find(s => s.id === id);
 const caseById = id => D.cases.find(c => c.id === id);
 const backBtn = (label = 'Назад') => P.kind === 'web' ? `<button class="back" type="button" data-back>${ic('back')}${esc(label)}</button>` : '';
+const footer = () => `<p class="note" style="margin-top:28px">${esc(L.operator || '')}. <a href="#/terms">Условия работы</a> · <a href="#/privacy">Политика обработки данных</a>. Цены не являются публичной офертой.</p>`;
 const priceTxt = (n, monthly) => `от ${rub(n)}${monthly ? '/мес' : ''}`;
 
 /* ---------- Экраны ---------- */
 function home() {
   const c = D.cases[0];
   const dirs = [['bot', 'bot', 'Боты'], ['app', 'app', 'Мини-приложения'], ['smm', 'smm', 'Продвижение']];
-  const ben = [['doc', 'Договор и чек', 'самозанятого'], ['shield', 'Соблюдаем', '152-ФЗ'], ['globe', 'Одна разработка', 'Telegram и MAX'], ['clock', '30 дней', 'исправлений']];
+  const ben = [['doc', 'Договор и чек', 'самозанятого'], ['shield', 'Данные по 152-ФЗ', 'политика открыта'], ['globe', 'Telegram и MAX', 'одно мини-приложение'], ['clock', '30 дней', 'исправление ошибок']];
   view.innerHTML = `<p class="eyebrow">Цифровые решения для бизнеса</p>
     <section class="hero">
       <p class="eyebrow">Belkov / Digital Studio</p>
@@ -80,7 +81,7 @@ function home() {
     <ol class="steps">${D.process.map((s, i) => { const [h, ...r] = s.split(' — '); return `<li><span class="n">0${i + 1}</span><div><b>${esc(h)}</b>${r.length ? `<span>${esc(r.join(' — '))}</span>` : ''}</div></li>`; }).join('')}</ol>
     <div class="actions"><a class="btn btn-wide" href="#/calc">Рассчитать стоимость ${ic('arrow')}</a><a class="btn btn-wide" href="#/faq">Частые вопросы ${ic('arrow')}</a></div>
     ${C.channelTelegram || C.channelMax ? `<h2 class="sec">Канал студии</h2><p class="meta">Кейсы, разборы и цены — подписывайтесь.</p>
-    <div class="actions">${C.channelTelegram ? `<button class="btn btn-wide" type="button" data-link="${esc(C.channelTelegram)}">Канал в Telegram ${ic('out')}</button>` : ''}${C.channelMax ? `<button class="btn btn-wide" type="button" data-link="${esc(C.channelMax)}">Канал в MAX ${ic('out')}</button>` : ''}</div>` : ''}`;
+    <div class="actions">${C.channelTelegram ? `<button class="btn btn-wide" type="button" data-link="${esc(C.channelTelegram)}">Канал в Telegram ${ic('out')}</button>` : ''}${C.channelMax ? `<button class="btn btn-wide" type="button" data-link="${esc(C.channelMax)}">Канал в MAX ${ic('out')}</button>` : ''}</div>` : ''}${footer()}`;
   setMain('Обсудить проект', () => go('#/brief'));
 }
 
@@ -95,7 +96,7 @@ function services() {
       <p class="meta" style="display:flex;gap:8px;align-items:center">${ic('clock')}${s.monthly ? 'ежемесячно' : `от ${s.daysFrom} раб. дн.`} · ${s.platforms.join(' · ')}</p>
       ${checks(s.summary)}<span class="more">Подробнее ${ic('out')}</span></a>`).join('') || `<div class="card" style="text-align:center"><p class="meta">Ничего не найдено. Измените фильтры.</p></div>`}</div>
     <h2 class="sec">Дополнительно</h2><div class="card"><ul class="lines" style="border-top:0">${S.addons.map(([n, p]) => `<li><span style="flex:1">${esc(n)}</span><b>${esc(p)}</b></li>`).join('')}</ul></div>
-    <h2 class="sec">Условия</h2><div class="card">${checks(S.rules)}</div>`;
+    <h2 class="sec">Условия</h2><div class="card">${checks(S.rules)}</div>${footer()}`;
   setMain('Рассчитать стоимость', () => go('#/calc'));
 }
 
@@ -136,8 +137,10 @@ function caseScreen(id) {
     <div class="cover" style="margin-top:14px"><img src="${esc(c.cover)}" alt="${esc(c.coverAlt)}"><span class="label">Triumph / 100 моделей</span></div>
     <h2 class="sec">Задача</h2><p>${esc(c.task)}</p>
     <h2 class="sec">Что сделали</h2><ol class="num-list">${c.blocks.map(b => `<li><div><b>${esc(b.h)}</b><span>${esc(b.t)}</span></div></li>`).join('')}</ol>
+    ${c.gallery ? `<p class="eyebrow" style="margin-top:28px">Пример интерфейса</p><h2 class="sec" style="margin-top:0">Экран за экраном</h2>
+    <div class="chips scroll gallery" role="list">${c.gallery.map(([src, cap], i) => `<button class="shot" type="button" data-zoom="${i}" role="listitem" aria-label="Увеличить: ${esc(cap)}"><img src="${esc(src)}" alt="${esc(cap)}" width="160" height="346" loading="lazy"><span>${esc(cap)}</span></button>`).join('')}</div>` : ''}
     <h2 class="sec">Стек</h2>${tags(c.stack)}
-    <h2 class="sec">Результат</h2><div class="card"><p class="eyebrow" style="margin:0 0 6px">Данные после запуска</p><p class="meta">${esc(c.result)}</p></div>
+    <h2 class="sec">Результат</h2><div class="card"><p class="eyebrow" style="margin:0 0 6px">Данные после запуска</p><p class="meta">${esc(c.result)}</p></div><p class="note">${esc(c.rights || '')}</p>
     <div class="actions">${c.demo ? `<button class="btn btn-wide" type="button" data-link="${esc(c.demo)}">Открыть демо ${ic('out')}</button>` : ''}
       <button class="btn btn-wide" type="button" data-share="case_${c.id}" data-share-text="Кейс: ${esc(c.title)}">${ic('share')} Поделиться</button></div>`;
   setMain('Хочу так же', () => { state.brief.svc = 'app'; go('#/brief'); });
@@ -191,6 +194,21 @@ function faq() {
   setMain('Обсудить проект', () => go('#/brief'));
 }
 
+function legal(kind) {
+  const items = L[kind] || [];
+  view.innerHTML = `${backBtn()}<p class="eyebrow">Документы</p><h1>${kind === 'privacy' ? 'Политика обработки персональных данных' : 'Условия работы'}</h1><p class="meta">Редакция от ${esc(L.updated)}</p>
+    <div class="grid" style="margin-top:12px">${items.map(([h, t]) => `<div class="card"><h3>${esc(h)}</h3><p class="meta">${esc(t)}</p></div>`).join('')}</div>
+    <div class="actions"><a class="btn btn-wide" href="#/${kind === 'privacy' ? 'terms' : 'privacy'}">${kind === 'privacy' ? 'Условия работы' : 'Политика обработки данных'} ${ic('arrow')}</a></div>`;
+  setMain(null);
+}
+function zoom(i) {
+  const [src, cap] = D.cases[0].gallery[i];
+  let d = document.getElementById('zoom');
+  if (!d) { d = document.createElement('dialog'); d.id = 'zoom'; d.className = 'zoom'; document.body.append(d); d.addEventListener('click', () => d.close()); }
+  d.innerHTML = `<img src="${esc(src)}" alt="${esc(cap)}"><p>${esc(cap)} · нажмите, чтобы закрыть</p>`;
+  d.showModal();
+}
+
 /* ---------- Заявка ---------- */
 function brief() {
   const b = state.brief;
@@ -204,8 +222,10 @@ function brief() {
       <div class="field"><label for="b-budget">Бюджет</label><select id="b-budget" name="budget">${['Выбрать диапазон', 'до 50 000 ₽', '50–100 тыс. ₽', '100–200 тыс. ₽', 'более 200 тыс. ₽'].map(o => `<option${o === b.budget ? ' selected' : ''}>${o}</option>`).join('')}</select></div>
       <div class="field"><label for="b-when">Когда нужно</label><select id="b-when" name="when">${['Пока без точной даты', 'В этом месяце', 'Срочно'].map(o => `<option${o === b.when ? ' selected' : ''}>${o}</option>`).join('')}</select></div>
       ${b.calc ? `<div class="card"><p class="eyebrow" style="margin:0 0 4px">Расчёт из калькулятора</p><p class="meta">${esc(b.calc)}</p></div>` : ''}
+      <label class="consent"><input type="checkbox" id="b-ok" name="ok" aria-describedby="b-ok-err"${b.ok ? ' checked' : ''}><span>Согласен на обработку персональных данных по <a href="#/privacy">Политике</a> для ответа на заявку</span></label>
+      <span class="err" id="b-ok-err" role="alert" hidden>Нужно согласие, чтобы мы могли ответить.</span>
     </form>
-    <p class="note">Данные не сохраняются на сервере: текст заявки вы отправляете сами в чат студии.</p>
+    <p class="note">Приложение не хранит данные на сервере: текст заявки вы отправляете сами в чат студии.</p>
     ${C.phone ? `<p class="note">Или позвоните: <a href="tel:${esc(C.phone.replace(/[^+\d]/g, ''))}">${esc(C.phone)}</a></p>` : ''}`;
   setMain('Отправить заявку', sendBrief);
 }
@@ -216,6 +236,9 @@ async function sendBrief() {
   const task = form.querySelector('#b-task'), err = form.querySelector('#b-err');
   if (!String(f.task || '').trim()) { task.setAttribute('aria-invalid', 'true'); err.hidden = false; task.focus(); haptic('heavy'); return; }
   task.removeAttribute('aria-invalid'); err.hidden = true;
+  const ok = form.querySelector('#b-ok'), okErr = form.querySelector('#b-ok-err');
+  if (!ok.checked) { okErr.hidden = false; ok.focus(); haptic('heavy'); return; }
+  okErr.hidden = true;
   const s = svcById(f.svc);
   const lines = [`Здравствуйте! Заявка в ${C.studio}.`];
   if (f.biz.trim()) lines.push(`Бизнес: ${f.biz.trim()}`);
@@ -237,7 +260,7 @@ function ready() {
   view.innerHTML = `<div class="done">${ic('check')}</div><h1>Заявка готова</h1><p class="lead">Мы собрали текст. Осталось подтвердить отправку в чате студии.</p>
     <div class="card"><p class="eyebrow" style="margin:0 0 6px">Следующие шаги</p><ol class="steps">
       <li><span class="n">01</span><div><b>Откройте чат</b><span>Проверьте текст и отправьте сообщение</span></div></li>
-      <li><span class="n">02</span><div><b>Ответ в рабочее время</b><span>Обычно в течение рабочего дня после отправки</span></div></li>
+      <li><span class="n">02</span><div><b>Ответ в рабочее время</b><span>Обычно отвечаем в течение рабочего дня</span></div></li>
       <li><span class="n">03</span><div><b>Созвон 30 минут</b><span>Обсудим задачу, сроки и бюджет</span></div></li></ol></div>
     <div class="actions"><a class="btn btn-wide" href="#/cases">Посмотреть кейсы ${ic('arrow')}</a></div>`;
   setMain('Открыть чат студии', openChat);
@@ -249,13 +272,14 @@ function route() {
   const [a, b] = (location.hash || '#/').slice(2).split('/');
   const tab = ({ services: 'services', solutions: 'solutions', cases: 'cases', brief: 'brief', calc: 'services' })[a] || (a === 'faq' ? 'home' : 'home');
   document.querySelectorAll('.tabs a').forEach(x => x.dataset.tab === tab ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current'));
-  const deep = (a === 'services' && b) || (a === 'cases' && b) || a === 'calc' || a === 'faq';
+  const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'privacy', 'terms'].includes(a);
   setBack(deep ? () => back() : null);
   if (a === 'services') b ? service(b) : services();
   else if (a === 'solutions') solutions();
   else if (a === 'cases') b ? caseScreen(b) : cases();
   else if (a === 'calc') calc();
   else if (a === 'faq') faq();
+  else if (a === 'privacy' || a === 'terms') legal(a);
   else if (a === 'brief') brief();
   else home();
   window.scrollTo(0, 0);
@@ -267,6 +291,7 @@ function back() {
 }
 
 document.addEventListener('click', e => {
+  const z = e.target.closest('[data-zoom]'); if (z) return zoom(+z.dataset.zoom);
   const t = e.target.closest('[data-link],[data-dir],[data-f-dir],[data-f-plat],[data-calc],[data-calc-restart],[data-share],[data-back]'); if (!t) return;
   const d = t.dataset;
   if (d.link) { e.preventDefault(); return openLink(d.link); }
@@ -286,12 +311,12 @@ document.addEventListener('click', e => {
     return share(url, d.shareText || C.studio);
   }
 });
-document.addEventListener('input', e => { const f = e.target.closest('[data-brief]'); if (f && e.target.name) state.brief[e.target.name] = e.target.value; });
+document.addEventListener('input', e => { const f = e.target.closest('[data-brief]'); if (f && e.target.name) state.brief[e.target.name] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; });
 window.addEventListener('hashchange', route);
 
 (async () => {
   await initPlatform();
-  [S, D, PR] = await Promise.all(['data/services.json', 'data/content.json', 'data/pricing.json'].map(u => fetch(u).then(r => r.json())));
+  [S, D, PR, L] = await Promise.all(['data/services.json', 'data/content.json', 'data/pricing.json', 'data/legal.json'].map(u => fetch(u).then(r => r.json())));
   Object.assign(state.brief, (await load('brief')) || {});
   bindBack(); bindMain();
   readStart();
