@@ -14,15 +14,18 @@
 </head>
 <body>
 <div class="app">
-  <header class="top"><span class="brand">СТУДИЯ<b>БЕЛЬКОВА</b></span><span class="tag">SMM · боты · мини-приложения · ИИ</span></header>
+  <header class="top">
+    <span class="logo" aria-hidden="true">б.</span>
+    <span class="brand"><b>Студия Белькова</b><span>SMM · Боты · Mini Apps</span></span>
+  </header>
   <main id="view" class="view" aria-live="polite"></main>
   <div class="dock" id="dock" hidden><button class="btn btn-accent btn-wide" type="button"></button></div>
   <nav class="tabs" aria-label="Разделы">
-    <a href="#/" data-tab="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-5v-5h-4v5H5a1 1 0 0 1-1-1z"/></svg>Главная</a>
-    <a href="#/services" data-tab="services"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>Услуги</a>
-    <a href="#/solutions" data-tab="solutions"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.5 5 5.5.8-4 3.9.9 5.5L12 15.6 7.1 18.2l.9-5.5-4-3.9L9.5 8z"/></svg>Решения</a>
-    <a href="#/cases" data-tab="cases"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16"/></svg>Кейсы</a>
-    <a href="#/brief" data-tab="brief"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg>Заявка</a>
+    <a href="#/" data-tab="home"><span class="pill"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>Главная</a>
+    <a href="#/services" data-tab="services"><span class="pill"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>Услуги</a>
+    <a href="#/solutions" data-tab="solutions"><span class="pill"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><path d="M13 17h8M17 13v8"/></svg></span>Решения</a>
+    <a href="#/cases" data-tab="cases"><span class="pill"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/></svg></span>Кейсы</a>
+    <a href="#/brief" data-tab="brief"><span class="pill"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></span>Заявка</a>
   </nav>
   <div class="toast" id="toast" role="status" hidden></div>
 </div>
