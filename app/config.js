@@ -11,5 +11,5 @@ export const CONFIG = {
   appMax: 'https://max.ru/se14910384_1_bot',
   channelTelegram: 'https://t.me/belkovstudio',
   channelMax: 'https://max.ru/se14910384_biz',
-  appWeb: 'https://ivanbelkov1984.github.io/belkov-studio-app/',
+  appWeb: 'https://studio.aiservicesint.ru/',
 };

@@ -114,7 +114,8 @@ sed -i 's/# server_tokens off;/server_tokens off;/' /etc/nginx/nginx.conf
 nginx -t && systemctl reload nginx
 
 echo "== 9. HTTPS (нужны A-записи studio.$DOMAIN и music.$DOMAIN на этот сервер)"
-certbot --nginx --non-interactive --agree-tos -m "$EMAIL" --redirect \
+EMAIL_ARG=(-m "$EMAIL"); [ "$EMAIL" = none ] && EMAIL_ARG=(--register-unsafely-without-email)
+certbot --nginx --non-interactive --agree-tos "${EMAIL_ARG[@]}" --redirect \
   -d "studio.$DOMAIN" -d "music.$DOMAIN" || echo "!! Сертификат не выпущен: проверьте DNS, затем повторите bootstrap"
 
 echo "== 10. Резервные копии: ежедневно, шифрование age, хранение 14 дней"
