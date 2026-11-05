@@ -1,0 +1,27 @@
+{
+  "note": "Коэффициенты калькулятора — гипотеза, утверждает Иван. Итог: от base*коэф до base*коэф*spread.",
+  "types": [
+    { "id": "bot", "name": "Чат-бот", "base": 30000, "days": 5 },
+    { "id": "app", "name": "Мини-приложение", "base": 80000, "days": 14 },
+    { "id": "ai", "name": "ИИ-ассистент", "base": 60000, "days": 10 },
+    { "id": "smm", "name": "SMM-оформление", "base": 15000, "days": 7 }
+  ],
+  "platforms": [
+    { "id": "tg", "name": "Telegram", "k": 1 },
+    { "id": "max", "name": "MAX", "k": 1 },
+    { "id": "both", "name": "Telegram + MAX", "k": 1.2 }
+  ],
+  "features": [
+    { "id": "catalog", "name": "Каталог товаров", "add": 30000, "days": 5 },
+    { "id": "crm", "name": "Интеграция с CRM", "add": 25000, "days": 4 },
+    { "id": "pay", "name": "Онлайн-оплата", "add": 30000, "days": 5 },
+    { "id": "ai", "name": "ИИ-ответы", "add": 25000, "days": 4 },
+    { "id": "mail", "name": "Рассылки", "add": 10000, "days": 2 },
+    { "id": "admin", "name": "Админка для правок", "add": 20000, "days": 4 }
+  ],
+  "urgency": [
+    { "id": "normal", "name": "Обычный срок", "k": 1 },
+    { "id": "fast", "name": "Срочно", "k": 1.3 }
+  ],
+  "spread": 1.5
+}
