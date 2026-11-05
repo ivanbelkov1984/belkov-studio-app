@@ -48,7 +48,9 @@ function home() {
     <a class="card link" href="#/cases/${c.id}"><div class="row"><h3>${esc(c.title)}</h3><span class="meta">${c.platforms.join(', ')}</span></div><p class="meta">${esc(c.task)}</p></a>
     <h2 class="sec">Как работаем</h2>
     <ol class="steps">${D.process.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
-    <div class="actions"><a class="btn btn-wide" href="#/calc">Рассчитать стоимость</a><a class="btn btn-wide" href="#/faq">Частые вопросы</a></div>`;
+    <div class="actions"><a class="btn btn-wide" href="#/calc">Рассчитать стоимость</a><a class="btn btn-wide" href="#/faq">Частые вопросы</a></div>
+    <h2 class="sec">Канал студии</h2><p class="meta">Кейсы, разборы и цены — подписывайтесь.</p>
+    <div class="actions">${C.channelTelegram ? `<button class="btn btn-wide" type="button" data-link="${esc(C.channelTelegram)}">Канал в Telegram</button>` : ''}${C.channelMax ? `<button class="btn btn-wide" type="button" data-link="${esc(C.channelMax)}">Канал в MAX</button>` : ''}</div>`;
   setMain('Обсудить проект', () => go('#/brief'));
 }
 
