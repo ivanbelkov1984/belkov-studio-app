@@ -59,9 +59,11 @@ function services() {
     <div class="chips scroll" role="group" aria-label="Площадка">${['all', ...S.platforms].map(p => `<button class="chip" type="button" data-f-plat="${p}" aria-pressed="${state.plat === p}">${p === 'all' ? 'Все площадки' : p}</button>`).join('')}</div>
     <div class="grid" style="margin-top:12px">${list.map(s => `<a class="card link" href="#/services/${s.id}">
       <div class="row"><h3>${esc(s.name)}</h3><span class="price">от ${rub(s.priceFrom)}${s.monthly ? '/мес' : ''}</span></div>
-      <p class="meta">${esc(s.for)} · от ${s.daysFrom} дн.</p>
+      <p class="meta">${esc(s.for)}${s.monthly ? '' : ` · от ${s.daysFrom} раб. дн.`}</p>
       <ul class="list">${s.summary.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
-      <div class="badges">${s.platforms.map(p => `<span class="badge">${p}</span>`).join('')}</div></a>`).join('') || '<p class="meta">По выбранным фильтрам ничего нет.</p>'}</div>`;
+      <div class="badges">${s.platforms.map(p => `<span class="badge">${p}</span>`).join('')}</div></a>`).join('') || '<p class="meta">По выбранным фильтрам ничего нет.</p>'}</div>
+    <h2 class="sec">Дополнительно</h2><div class="card"><ul class="list">${S.addons.map(([n, p]) => `<li>${esc(n)} — <b>${esc(p)}</b></li>`).join('')}</ul></div>
+    <h2 class="sec">Условия</h2><div class="card"><ul class="list">${S.rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>`;
   setMain('Рассчитать стоимость', () => go('#/calc'));
 }
 
@@ -71,7 +73,7 @@ function service(id) {
   view.innerHTML = `${backBtn()}<h1>${esc(s.name)}</h1><p class="lead">${esc(s.for)}</p>
     <div class="badges">${s.platforms.map(p => `<span class="badge">${p}</span>`).join('')}</div>
     <h2 class="sec">Что входит</h2><ul class="list">${s.includes.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
-    <h2 class="sec">Тарифы</h2><div class="tiers">${s.tiers.map(t => `<div class="tier"><div class="row"><h3>${esc(t.name)}</h3><span class="price">от ${rub(t.price)}${s.monthly && t.days >= 30 ? '/мес' : ''}</span></div><p class="meta">Срок: от ${t.days} дн.</p><ul class="list">${t.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}</div>
+    <h2 class="sec">Тарифы</h2><div class="tiers">${s.tiers.map(t => `<div class="tier"><div class="row"><h3>${esc(t.name)}</h3><span class="price">от ${rub(t.price)}${t.days >= 30 ? '/мес' : ''}</span></div><p class="meta">${t.days >= 30 ? 'Ежемесячно' : `Срок: от ${t.days} раб. дн.`}</p><ul class="list">${t.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}</div>
     ${s.integrations.length ? `<h2 class="sec">Интеграции</h2><div class="badges">${s.integrations.map(i => `<span class="badge">${esc(i)}</span>`).join('')}</div>` : ''}
     <h2 class="sec">Не входит</h2><ul class="list">${s.excludes.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
     ${cs ? `<h2 class="sec">Пример</h2><a class="card link" href="#/cases/${cs.id}"><h3>${esc(cs.title)}</h3><p class="meta">${esc(cs.task)}</p></a>` : ''}
