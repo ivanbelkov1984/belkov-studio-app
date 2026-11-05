@@ -53,7 +53,7 @@ function readStart() {
 const svcById = id => S.services.find(s => s.id === id);
 const caseById = id => D.cases.find(c => c.id === id);
 const backBtn = (label = 'Назад') => P.kind === 'web' ? `<button class="back" type="button" data-back>${ic('back')}${esc(label)}</button>` : '';
-const footer = () => `<p class="note" style="margin-top:28px">${esc(L.operator || '')}. <a href="#/terms">Условия работы</a> · <a href="#/privacy">Политика обработки данных</a>. Цены не являются публичной офертой.</p>`;
+const footer = () => `<p class="note" style="margin-top:28px">${esc(L.operator || '')}. <a href="#/docs">Документы</a> · <a href="#/terms">Условия работы</a> · <a href="#/privacy">Политика обработки данных</a>. Цены не являются публичной офертой.</p>`;
 const priceTxt = (n, monthly) => `от ${rub(n)}${monthly ? '/мес' : ''}`;
 
 /* ---------- Экраны ---------- */
@@ -201,6 +201,18 @@ function legal(kind) {
     <div class="actions"><a class="btn btn-wide" href="#/${kind === 'privacy' ? 'terms' : 'privacy'}">${kind === 'privacy' ? 'Условия работы' : 'Политика обработки данных'} ${ic('arrow')}</a></div>`;
   setMain(null);
 }
+function docs() {
+  const base = (C.appWeb || location.href.split('#')[0]).replace(/[^/]*$/, '');
+  const files = [
+    ['Договор оказания услуг', 'Шаблон для самозанятого: предмет, оплата 50/50, приёмка, гарантия 30 дней, права, 152-ФЗ, реклама. С приложением «Задание».', 'docs/dogovor-samozanyatyj.docx'],
+    ['Акт сдачи-приёмки', 'Форма акта к договору: перечень услуг, сумма без НДС, номер чека «Мой налог».', 'docs/akt-samozanyatyj.docx']
+  ];
+  view.innerHTML = `${backBtn()}<p class="eyebrow">Документы</p><h1>Как мы оформляем работу</h1><p class="meta">Работаем по договору. По каждому платежу — чек самозанятого из «Мой налог». Шаблоны можно скачать и показать юристу заранее; итоговый текст согласуем перед подписанием.</p>
+    <div class="grid" style="margin-top:12px">${files.map(([h, t, f]) => `<div class="card"><h3>${esc(h)}</h3><p class="meta">${esc(t)}</p><div class="actions"><button class="btn btn-wide" type="button" data-link="${esc(base + f)}">Скачать .docx ${ic('out')}</button></div></div>`).join('')}
+    <a class="card" href="#/terms"><h3>Условия работы</h3><p class="meta">Цены, сроки, оплата, что не входит в стоимость.</p></a>
+    <a class="card" href="#/privacy"><h3>Политика обработки персональных данных</h3><p class="meta">Какие данные, зачем и как отозвать согласие (152-ФЗ).</p></a></div>${footer()}`;
+  setMain(null);
+}
 function zoom(i) {
   const [src, cap] = D.cases[0].gallery[i];
   let d = document.getElementById('zoom');
@@ -272,7 +284,7 @@ function route() {
   const [a, b] = (location.hash || '#/').slice(2).split('/');
   const tab = ({ services: 'services', solutions: 'solutions', cases: 'cases', brief: 'brief', calc: 'services' })[a] || (a === 'faq' ? 'home' : 'home');
   document.querySelectorAll('.tabs a').forEach(x => x.dataset.tab === tab ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current'));
-  const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'privacy', 'terms'].includes(a);
+  const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'privacy', 'terms', 'docs'].includes(a);
   setBack(deep ? () => back() : null);
   if (a === 'services') b ? service(b) : services();
   else if (a === 'solutions') solutions();
@@ -280,6 +292,7 @@ function route() {
   else if (a === 'calc') calc();
   else if (a === 'faq') faq();
   else if (a === 'privacy' || a === 'terms') legal(a);
+  else if (a === 'docs') docs();
   else if (a === 'brief') brief();
   else home();
   window.scrollTo(0, 0);
