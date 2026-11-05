@@ -18,5 +18,6 @@
 2. `set -a; . s3.env; set +a; export RESTIC_PASSWORD_FILE=restic.pass RESTIC_REPOSITORY=s3:https://firsts3.ru/belkov-backups-studio`
 3. `restic snapshots` и `restic restore latest --target /tmp/restore`
 4. Данные: перенести `/tmp/restore/srv/...` в `/srv/...`; базу: `pg_restore -d music_bot /tmp/restore/var/backups/apps/music-db-latest.dump`.
+   Восстанавливать от root (`restic restore` сохраняет владельца), затем проверить `ls -ld /srv/music/data/audio` — владелец должен быть 10001.
 
 Проверено 06.11.2026: восстановление и `restic check` успешны.

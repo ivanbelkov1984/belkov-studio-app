@@ -17,6 +17,7 @@ docker run -d --name tmb-music --restart unless-stopped --network host \
   -v /srv/music/data:/app/data -v /srv/music/logs:/app/logs \
   tmb-music:<тег>
 ```
+Контейнер работает от uid 10001: каталоги `/srv/music/logs/app` и `/srv/music/data/audio` принадлежат 10001 (права 750), `/srv/music/data` — 751. Песни: `/srv/music/data/audio/<song_id>.mp3`.
 Приложение должно слушать `127.0.0.1:8080`. Проверка: `curl https://music.aiservicesint.ru/health`.
 Токены и ключи кладёт владелец в `/srv/music/secrets/.env` (600), в репозиторий и чат не попадают.
 
