@@ -1,6 +1,7 @@
 import { CONFIG as C } from './config.js';
 import { P, initPlatform, haptic, hapticOk, openLink, setBack, bindBack, setMain, bindMain, save, load, share } from './platform.js';
 import { admin, isOwner } from './admin.js';
+import { payScreen } from './pay.js';
 
 const $ = s => document.querySelector(s);
 const view = $('#view');
@@ -52,6 +53,8 @@ function readStart() {
     else if (part === 'brief') location.hash = '#/brief';
     else if (part === 'admin') location.hash = '#/admin';
   }
+  const pay = (q.get('pay') || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
+  if (pay) location.hash = `#/pay/${pay}`;
   if (!src && q.get('src')) src = q.get('src').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
 }
 
@@ -321,6 +324,7 @@ function route() {
   else if (a === 'docs') docs();
   else if (a === 'brief') brief();
   else if (a === 'admin') admin(b);
+  else if (a === 'pay' && b) payScreen(b);
   else home();
   window.scrollTo(0, 0);
 }

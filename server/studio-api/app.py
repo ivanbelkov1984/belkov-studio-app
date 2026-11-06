@@ -18,9 +18,13 @@ import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl
 
+import secrets
+
 import aiohttp
 import asyncpg
 from aiohttp import web
+
+import yookassa as yk
 
 log = logging.getLogger("studio-api")
 
@@ -40,6 +44,7 @@ CONSENT_VERSION = E("CONSENT_VERSION", "2026-11-05")
 TG_APP_LINK = E("TG_APP_LINK", "https://t.me/BelkovSMM_bot")
 MAX_APP_LINK = E("MAX_APP_LINK", "https://max.ru/se14910384_1_bot")
 RETENTION_DAYS = int(E("RETENTION_DAYS", "365"))
+PUBLIC_URL = E("PUBLIC_URL", "https://studio.aiservicesint.ru").rstrip("/")
 # Telegram Bot API заблокирован из дата-центров РФ: по умолчанию серверные вызовы Telegram выключены.
 # Проверка подписи Telegram работает без сети, поэтому пульт открывается и в Telegram.
 TG_API_ENABLED = E("TG_API_ENABLED", "0") == "1"
@@ -437,6 +442,186 @@ async def post_cancel(request):
     return web.json_response({"ok": r.endswith("1")})
 
 
+# ---------- Счета и оплата ЮKassa ----------
+def pay_link(pub: str) -> str:
+    return f"{PUBLIC_URL}/?pay={pub}"
+
+
+_pay_locks: dict[str, asyncio.Lock] = {}
+
+
+def pay_lock(pub: str) -> asyncio.Lock:
+    if len(_pay_locks) > 1000:
+        for k in [k for k, v in _pay_locks.items() if not v.locked()]:
+            _pay_locks.pop(k, None)
+    return _pay_locks.setdefault(pub, asyncio.Lock())
+
+
+async def apply_payment(app, payment: dict, expected: str | None = None) -> str:
+    """Применяет платёж, полученный ИЗ API (не тело уведомления). Возвращает итог."""
+    found = yk.succeeded(payment, "invoice_id")
+    if not found:
+        return "not_succeeded"
+    pub, amount = found
+    if expected and pub != expected:
+        return "invoice_mismatch"
+    pool, pid = app["pool"], str(payment["id"])
+    inv = await pool.fetchrow("SELECT * FROM invoices WHERE public_id=$1", pub)
+    if not inv:
+        await app["msg"].notify_owner(f"ВНИМАНИЕ: платёж ЮKassa {pid} на {amount} ₽ по неизвестному счёту {pub}. Проверьте и при необходимости верните деньги.")
+        return "unknown_invoice"
+    if inv["payment_ref"] == pid:
+        return "duplicate"
+    if inv["amount_rub"] != amount:
+        await app["msg"].notify_owner(f"ВНИМАНИЕ: платёж {pid} на {amount} ₽ не совпал с суммой счёта #{inv['id']} ({inv['amount_rub']} ₽). Не применён.")
+        return "amount_mismatch"
+    upd = await pool.fetchrow(
+        "UPDATE invoices SET status='paid', payment_ref=$2, paid_at=now() "
+        "WHERE public_id=$1 AND status='awaiting_payment' RETURNING id, lead_id", pub, pid)
+    if not upd:
+        return "not_payable"
+    if upd["lead_id"]:
+        await pool.execute("UPDATE leads SET status='contract', updated_at=now() WHERE id=$1 AND status IN ('new','work','offer')", upd["lead_id"])
+    await audit(pool, "invoice_paid", upd["lead_id"], f"invoice {upd['id']} {amount} RUB")
+    asyncio.create_task(app["msg"].notify_owner(
+        f"Оплачен счёт #{upd['id']}: {inv['title']} — {amount} ₽.\nПробейте чек в «Мой налог» и отметьте в пульте."))
+    return "paid"
+
+
+async def refresh_invoice(app, inv) -> None:
+    """Проверяет последний платёж счёта через API: студия не зависит от адреса уведомлений."""
+    if not inv["provider_payment_id"] or inv["status"] != "awaiting_payment" or not yk.enabled():
+        return
+    try:
+        payment = await yk.get_payment(inv["provider_payment_id"])
+    except yk.YooKassaError:
+        return
+    if payment.get("status") == "succeeded":
+        await apply_payment(app, payment, expected=inv["public_id"])
+
+
+def inv_view(r) -> dict:
+    return {"title": r["title"], "amount_rub": r["amount_rub"], "status": r["status"],
+            "paid_at": r["paid_at"].isoformat() if r["paid_at"] else None}
+
+
+async def pay_info(request):
+    pub = request.match_info["pub"]
+    pool = request.app["pool"]
+    inv = await pool.fetchrow("SELECT * FROM invoices WHERE public_id=$1", pub)
+    if not inv:
+        return web.json_response({"ok": False, "error": "Счёт не найден"}, status=404)
+    if inv["status"] == "awaiting_payment" and inv["provider_payment_id"]:
+        await refresh_invoice(request.app, inv)
+        inv = await pool.fetchrow("SELECT * FROM invoices WHERE public_id=$1", pub)
+    return web.json_response({"ok": True, **inv_view(inv), "online": yk.enabled()})
+
+
+async def pay_start(request):
+    pub = request.match_info["pub"]
+    if not yk.enabled():
+        return web.json_response({"ok": False, "error": "Онлайн-оплата пока не подключена"}, status=503)
+    if not rate_ok("pay:" + client_ip(request), 10, 60):
+        return web.json_response({"ok": False, "error": "Слишком часто, попробуйте через минуту"}, status=429)
+    async with pay_lock(pub):
+        pool = request.app["pool"]
+        inv = await pool.fetchrow("SELECT * FROM invoices WHERE public_id=$1", pub)
+        if not inv:
+            return web.json_response({"ok": False, "error": "Счёт не найден"}, status=404)
+        if inv["status"] != "awaiting_payment":
+            return web.json_response({"ok": False, "status": inv["status"], "error": "Счёт уже не ждёт оплаты"}, status=409)
+        if inv["provider_payment_id"]:
+            try:
+                payment = await yk.get_payment(inv["provider_payment_id"])
+            except yk.YooKassaError as e:
+                if e.transient:
+                    return web.json_response({"ok": False, "error": "Платёжный сервис недоступен, попробуйте позже"}, status=502)
+                payment = None
+            st = (payment or {}).get("status")
+            if st == "pending":
+                url = (payment.get("confirmation") or {}).get("confirmation_url")
+                if isinstance(url, str) and url.startswith("https://"):
+                    return web.json_response({"ok": True, "confirmation_url": url})
+            elif st == "succeeded":
+                res = await apply_payment(request.app, payment, expected=pub)
+                return web.json_response({"ok": True, "result": res})
+            elif st == "waiting_for_capture":
+                return web.json_response({"ok": False, "error": "Платёж обрабатывается"}, status=409)
+        try:
+            pid, url = await yk.create_payment(inv["amount_rub"], f"{inv['title']}, счёт {inv['id']}",
+                                               pay_link(pub), {"invoice_id": pub})
+        except yk.YooKassaError:
+            return web.json_response({"ok": False, "error": "Платёжный сервис недоступен, попробуйте позже"}, status=502)
+        await pool.execute("UPDATE invoices SET provider_payment_id=$2 WHERE public_id=$1 AND status='awaiting_payment'", pub, pid)
+        return web.json_response({"ok": True, "confirmation_url": url})
+
+
+async def yookassa_notify(request):
+    """Уведомление ЮKassa: тело — только подсказка, решает повторный запрос платежа через API."""
+    if not yk.enabled():
+        return web.json_response({"ok": False}, status=503)
+    if not rate_ok("yk", 120, 60):
+        return web.json_response({"ok": False}, status=429)
+    if not yk.ip_allowed(client_ip(request)):
+        log.warning("yookassa notification from non-YooKassa address (re-fetch decides)")
+    try:
+        data = json.loads(await request.read())
+    except (ValueError, UnicodeDecodeError):
+        return web.json_response({"ok": False}, status=400)
+    obj = data.get("object") if isinstance(data, dict) else None
+    pid = obj.get("id") if isinstance(obj, dict) else None
+    if not isinstance(pid, str) or data.get("event") not in ("payment.succeeded", "payment.canceled"):
+        return web.json_response({"result": "ignored"})
+    try:
+        payment = await yk.get_payment(pid)
+    except yk.YooKassaError as e:
+        return web.json_response({"ok": False}, status=503) if e.transient else web.json_response({"result": "ignored"})
+    if payment.get("id") != pid or payment.get("status") != "succeeded":
+        return web.json_response({"result": "not_succeeded"})
+    return web.json_response({"result": await apply_payment(request.app, payment)})
+
+
+async def invoices_list(request):
+    rows = await request.app["pool"].fetch("SELECT * FROM invoices ORDER BY created_at DESC LIMIT 100")
+    return web.json_response({"ok": True, "online": yk.enabled(), "invoices": [
+        {**row(r), "link": pay_link(r["public_id"])} for r in rows]})
+
+
+async def invoice_create(request):
+    b = await request.json()
+    title = clean(b.get("title"), 120)
+    try:
+        amount = int(b.get("amount_rub"))
+    except (TypeError, ValueError):
+        amount = 0
+    if not title or amount <= 0 or amount > 1_000_000:
+        return web.json_response({"ok": False, "error": "Нужны название и сумма от 1 до 1 000 000 ₽"}, status=400)
+    lead_id = b.get("lead_id")
+    lead_id = int(lead_id) if str(lead_id or "").isdigit() else None
+    pub = secrets.token_urlsafe(12)
+    iid = await request.app["pool"].fetchval(
+        "INSERT INTO invoices(public_id, lead_id, title, amount_rub) VALUES($1,$2,$3,$4) RETURNING id", pub, lead_id, title, amount)
+    await audit(request.app["pool"], "invoice_created", lead_id, f"invoice {iid} {amount} RUB")
+    return web.json_response({"ok": True, "id": iid, "link": pay_link(pub)})
+
+
+async def invoice_action(request):
+    iid, action = int(request.match_info["id"]), request.match_info["action"]
+    pool = request.app["pool"]
+    if action == "receipt":
+        r = await pool.execute("UPDATE invoices SET receipt_done=true WHERE id=$1 AND status='paid'", iid)
+    elif action == "cancel":
+        r = await pool.execute("UPDATE invoices SET status='canceled' WHERE id=$1 AND status='awaiting_payment'", iid)
+    elif action == "check":
+        inv = await pool.fetchrow("SELECT * FROM invoices WHERE id=$1", iid)
+        if inv:
+            await refresh_invoice(request.app, inv)
+        r = "UPDATE 1"
+    else:
+        return web.json_response({"ok": False}, status=404)
+    return web.json_response({"ok": r.endswith("1")})
+
+
 # ---------- Фоновые задачи: публикация по расписанию, сроки хранения ----------
 async def scheduler(app):
     pool, msg = app["pool"], app["msg"]
@@ -452,6 +637,12 @@ async def scheduler(app):
                 oks = [v.get("ok") for v in res.values()]
                 st = "sent" if oks and all(oks) else ("partial" if any(oks) else "failed")
                 await pool.execute("UPDATE posts SET status=$2, result=$3 WHERE id=$1", p["id"], st, json.dumps(res, ensure_ascii=False))
+            if yk.enabled():
+                pending = await pool.fetch(
+                    "SELECT * FROM invoices WHERE status='awaiting_payment' AND provider_payment_id IS NOT NULL "
+                    "AND created_at > now() - interval '7 days' ORDER BY created_at DESC LIMIT 10")
+                for inv in pending:
+                    await refresh_invoice(app, inv)
             if time.time() - last_retention > 6 * 3600:
                 last_retention = time.time()
                 gone = await pool.fetch(
@@ -502,6 +693,12 @@ def make_app() -> web.Application:
     r.add_get("/api/admin/posts", posts_list)
     r.add_post("/api/admin/posts", post_create)
     r.add_post("/api/admin/posts/{id:\\d+}/cancel", post_cancel)
+    r.add_get("/api/admin/invoices", invoices_list)
+    r.add_post("/api/admin/invoices", invoice_create)
+    r.add_post("/api/admin/invoices/{id:\\d+}/{action:receipt|cancel|check}", invoice_action)
+    r.add_get("/api/pay/{pub:[A-Za-z0-9_-]{8,40}}", pay_info)
+    r.add_post("/api/pay/{pub:[A-Za-z0-9_-]{8,40}}", pay_start)
+    r.add_post("/api/payments/yookassa", yookassa_notify)
     app.on_startup.append(on_start)
     app.on_cleanup.append(on_stop)
     return app

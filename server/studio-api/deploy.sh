@@ -10,7 +10,7 @@ id studio &>/dev/null || adduser --system --group --no-create-home --home /srv/s
 install -d -m 755 -o root -g root /srv/studio/api
 install -d -m 750 -o studio -g studio /srv/studio/logs
 install -d -m 750 -o root -g studio /srv/studio/secrets
-install -m 644 -o root -g root "$SRC/app.py" "$SRC/schema.sql" /srv/studio/api/
+install -m 644 -o root -g root "$SRC/app.py" "$SRC/schema.sql" "$SRC/yookassa.py" /srv/studio/api/
 
 # База и роль (пароль генерируется на сервере, в консоль не выводится)
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='studio_api'" | grep -q 1; then
@@ -36,6 +36,10 @@ MAX_CA_BUNDLE=/srv/studio/secrets/russian_ca.pem
 LEADS_ENABLED=0
 EOF
 fi
+# Ключи, добавленные в новых версиях, дописываются пустыми (существующие значения не трогаются)
+for k in YOOKASSA_SHOP_ID YOOKASSA_SECRET_KEY TG_API_ENABLED; do
+  grep -q "^$k=" /srv/studio/secrets/.env || echo "$k=" >> /srv/studio/secrets/.env
+done
 chown root:studio /srv/studio/secrets/.env; chmod 640 /srv/studio/secrets/.env
 [ -f /srv/studio/secrets/russian_ca.pem ] || { [ -f /srv/music/secrets/russian_ca.pem ] && install -m 644 /srv/music/secrets/russian_ca.pem /srv/studio/secrets/russian_ca.pem || true; }
 

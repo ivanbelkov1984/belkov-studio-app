@@ -63,3 +63,19 @@ CREATE TABLE IF NOT EXISTS audit (
   lead_id bigint,
   detail  text
 );
+
+-- Счета на оплату через ЮKassa (самозанятый: чек оформляется в «Мой налог», receipt не передаётся).
+CREATE TABLE IF NOT EXISTS invoices (
+  id                  bigserial PRIMARY KEY,
+  public_id           text UNIQUE NOT NULL,          -- в ссылке для клиента
+  lead_id             bigint REFERENCES leads(id) ON DELETE SET NULL,
+  title               text NOT NULL,
+  amount_rub          integer NOT NULL CHECK (amount_rub > 0),
+  status              text NOT NULL DEFAULT 'awaiting_payment', -- awaiting_payment | paid | canceled
+  provider_payment_id text,                          -- последний созданный платёж ЮKassa
+  payment_ref         text UNIQUE,                   -- id успешного платежа (защита от двойного учёта)
+  receipt_done        boolean NOT NULL DEFAULT false,-- чек в «Мой налог» пробит
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  paid_at             timestamptz
+);
+CREATE INDEX IF NOT EXISTS invoices_status_idx ON invoices (status, created_at DESC);

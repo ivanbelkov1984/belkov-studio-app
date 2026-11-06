@@ -28,7 +28,7 @@ export async function isOwner() {
 function shell(inner) {
   const t = (id, label) => `<button class="chip" type="button" data-adm-tab="${id}"${tab === id ? ' aria-pressed="true"' : ''}>${label}</button>`;
   $('#view').innerHTML = `<p class="eyebrow">Пульт студии</p><h1>Управление</h1>
-    <div class="chips" role="tablist">${t('leads', 'Заявки')}${t('post', 'Публикация')}${t('funnel', 'Воронка')}</div>
+    <div class="chips" role="tablist">${t('leads', 'Заявки')}${t('inv', 'Счета')}${t('post', 'Публикация')}${t('funnel', 'Воронка')}</div>
     <div id="adm">${inner}</div>`;
   setMain(null);
 }
@@ -41,6 +41,7 @@ export async function admin(sub) {
   if (!me.owner) return shell(`<div class="card"><p>Доступ только у владельца.</p><p class="meta">Ваш ID на этой площадке (${esc(me.platform)}): <b>${esc(me.id)}</b>. Если это вы, внесите его в настройки сервера как OWNER_${me.platform === 'max' ? 'MAX' : 'TG'}_ID.</p></div>`);
   if (tab === 'leads') return leads();
   if (tab === 'post') return post();
+  if (tab === 'inv') return invoices();
   return funnel();
 }
 
@@ -77,7 +78,26 @@ async function leadCard(id) {
     <div class="field"><label for="a-reply">Ответ клиенту в ${l.platform === 'max' ? 'MAX' : 'Telegram'}</label><textarea id="a-reply" placeholder="Здравствуйте! Спасибо за заявку…"></textarea></div>
     <button class="btn btn-accent btn-wide" type="button" data-adm-reply="${l.id}">Отправить ответ</button>`}
     ${msgs ? `<div class="card"><p class="eyebrow">Отправленные ответы</p>${msgs}</div>` : ''}
+    <button class="btn btn-wide" type="button" data-adm-invfor="${l.id}">Выставить счёт по заявке</button>
     <button class="btn btn-wide" type="button" data-adm-del="${l.id}">Удалить по запросу клиента</button>`);
+}
+
+/* ---------- Счета (ЮKassa) ---------- */
+const IS = { awaiting_payment: 'ждёт оплаты', paid: 'оплачен', canceled: 'отменён' };
+async function invoices(leadId = '') {
+  const d = await api('admin/invoices');
+  const list = (d.invoices || []).map(i => `<div class="card"><p class="meta">#${i.id} · ${dt(i.created_at)} · ${IS[i.status] || i.status}${i.lead_id ? ' · заявка #' + i.lead_id : ''}</p>
+      <p><b>${esc(i.title)}</b> — ${new Intl.NumberFormat('ru-RU').format(i.amount_rub)} ₽</p>
+      ${i.status === 'awaiting_payment' ? `<p class="meta">Ссылка для клиента: <span style="user-select:all">${esc(i.link)}</span></p>
+        <div class="chips"><button class="chip" type="button" data-adm-copy="${esc(i.link)}">Скопировать ссылку</button><button class="chip" type="button" data-adm-inv="${i.id}:check">Проверить оплату</button><button class="chip" type="button" data-adm-inv="${i.id}:cancel">Отменить</button></div>` : ''}
+      ${i.status === 'paid' ? (i.receipt_done ? '<p class="meta">Чек в «Мой налог» пробит</p>' : `<button class="btn btn-accent" type="button" data-adm-inv="${i.id}:receipt">Чек в «Мой налог» пробит</button>`) : ''}</div>`).join('');
+  shell(`${d.online ? '' : '<div class="card"><p class="meta">ЮKassa не подключена: ссылки создаются, но оплатить по ним пока нельзя (нужны YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY на сервере).</p></div>'}
+    <form class="form" data-adm-inv-new>
+      <div class="field"><label for="i-title">За что *</label><input id="i-title" name="title" placeholder="Предоплата: чат-бот для кофейни" required></div>
+      <div class="field"><label for="i-sum">Сумма, ₽ *</label><input id="i-sum" name="amount_rub" type="number" min="1" step="1" inputmode="numeric" required></div>
+      <div class="field"><label for="i-lead">Номер заявки (необязательно)</label><input id="i-lead" name="lead_id" inputmode="numeric" value="${esc(leadId)}"></div>
+      <button class="btn btn-accent btn-wide" type="submit">Создать счёт и ссылку</button></form>
+    ${list ? `<p class="eyebrow" style="margin-top:24px">Счета</p>${list}` : ''}`);
 }
 
 /* ---------- Публикация ---------- */
@@ -118,9 +138,12 @@ async function funnel(days = 30) {
 function toastMsg(t) { const el = $('#toast'); if (!el) return; el.textContent = t; el.hidden = false; setTimeout(() => { el.hidden = true; }, 4000); }
 
 document.addEventListener('click', async e => {
-  const t = e.target.closest('[data-adm-tab],[data-adm-filter],[data-adm-lead],[data-adm-save],[data-adm-reply],[data-adm-del],[data-adm-cancel],[data-adm-days]');
+  const t = e.target.closest('[data-adm-copy],[data-adm-inv],[data-adm-invfor],[data-adm-tab],[data-adm-filter],[data-adm-lead],[data-adm-save],[data-adm-reply],[data-adm-del],[data-adm-cancel],[data-adm-days]');
   if (!t) return;
   const d = t.dataset; haptic();
+  if (d.admCopy) { try { await navigator.clipboard.writeText(d.admCopy); toastMsg('Ссылка скопирована'); } catch { toastMsg('Выделите ссылку и скопируйте'); } return; }
+  if (d.admInvfor) { tab = 'inv'; return invoices(d.admInvfor); }
+  if (d.admInv) { const [id, act] = d.admInv.split(':'); if (act === 'cancel' && !(await ask('Отменить счёт?'))) return; const r = await api(`admin/invoices/${id}/${act}`, { method: 'POST' }); toastMsg(r.ok ? 'Готово' : 'Не получилось'); return invoices(); }
   if (d.admTab) { tab = d.admTab; return admin(); }
   if ('admFilter' in d) { filter = d.admFilter; return leads(); }
   if (d.admLead) return leadCard(d.admLead);
@@ -145,6 +168,15 @@ document.addEventListener('click', async e => {
 });
 
 document.addEventListener('submit', async e => {
+  const fi = e.target.closest('[data-adm-inv-new]');
+  if (fi) {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(fi));
+    const r = await api('admin/invoices', { method: 'POST', body: JSON.stringify({ title: v.title, amount_rub: +v.amount_rub, lead_id: v.lead_id || null }) });
+    if (!r.ok) return toastMsg(r.error || 'Ошибка');
+    hapticOk(); try { await navigator.clipboard.writeText(r.link); toastMsg('Счёт создан, ссылка скопирована'); } catch { toastMsg('Счёт создан'); }
+    return invoices();
+  }
   const f = e.target.closest('[data-adm-post]'); if (!f) return;
   e.preventDefault();
   const v = Object.fromEntries(new FormData(f));
