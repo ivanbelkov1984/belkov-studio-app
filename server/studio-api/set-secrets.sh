@@ -6,8 +6,10 @@ set -euo pipefail
 KEY="${SSH_KEY:-$HOME/.ssh/timeweb_belkov}"
 HOST="deploy@168.113.190.224"
 
+ONLY="${1:-}"   # можно спросить один ключ: bash set-secrets.sh MAX_BOT_TOKEN
 ask() { # имя, подсказка, скрыто(1/0)
   local v
+  [ -n "$ONLY" ] && [ "$1" != "$ONLY" ] && return 0
   if [ "$3" = 1 ]; then read -r -s -p "$2: " v; echo; else read -r -p "$2: " v; fi
   [ -n "$v" ] && printf '%s=%s\n' "$1" "$v" >> "$TMP"
   return 0
