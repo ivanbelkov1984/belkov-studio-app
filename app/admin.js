@@ -37,7 +37,7 @@ const ago = iso => { const m = Math.max(0, Math.round((Date.now() - new Date(iso
 function shell(inner) {
   const t = (id, label) => `<button class="chip" type="button" data-adm-tab="${id}"${tab === id ? ' aria-pressed="true"' : ''}>${label}</button>`;
   $('#view').innerHTML = `<p class="eyebrow">Пульт студии</p><h1>Управление</h1>
-    <div class="chips" role="tablist">${t('today', 'Сегодня')}${t('leads', 'Заявки')}${t('inv', 'Счета')}${t('content', 'Контент')}${t('post', 'Публикация')}${t('funnel', 'Воронка')}</div>
+    <div class="chips" role="tablist">${t('today', 'Сегодня')}${t('leads', 'Заявки')}${t('inv', 'Счета')}${t('content', 'Контент')}${t('post', 'Публикация')}${t('funnel', 'Метрики')}</div>
     <div id="adm">${inner}</div>`;
   setMain(null);
 }
@@ -78,6 +78,9 @@ async function todayScreen() {
 
 /* ---------- Контент: управление логикой приложения ---------- */
 const BLOCK_HELP = {
+  templates: 'Готовые ответы клиентам: подставляются в карточке заявки одним нажатием.',
+  promos: 'Промокоды со скидкой, сроком и лимитом. Скидка фиксируется в заявке.',
+  flags: 'Включить или выключить функцию для площадки, источника или доли пользователей.',
   mode: 'Закрыть приём заявок, рабочие часы и сообщение вне часов.',
   banner: 'Заметный баннер на главной (акция, новость) с датами показа.',
   prices: 'Цены «от» и скрытие услуг. Пустое поле цены — как в прайсе.',
@@ -95,11 +98,13 @@ async function contentScreen() {
   const sec = (k, form) => `<details class="card"><summary><b>${esc(cfg.titles[k])}</b> <span class="meta">${ver(k)}</span></summary><p class="meta">${BLOCK_HELP[k]}</p>
     <form class="form" data-cfg="${k}">${form}<button class="btn btn-accent btn-wide" type="submit">Опубликовать</button></form>
     <button class="btn btn-wide" type="button" data-cfg-hist="${k}">История и откат</button><div id="hist-${k}"></div></details>`;
+  const tpl = v('templates') || [], promos = v('promos') || {}, flg = v('flags') || {};
   const m = v('mode') || {}, bn = v('banner') || {}, pri = v('prices') || {}, cal = v('calc') || {}, src = v('sources') || {}, faq = v('faq') || [];
   const mode = `<label class="consent"><input type="checkbox" name="closed"${m.closed ? ' checked' : ''}><span>Приём заявок закрыт</span></label>
     <div class="field"><label>Текст, когда закрыто</label><textarea name="closed_text" maxlength="300">${esc(m.closed_text || '')}</textarea></div>
     <div class="field"><label>Рабочие часы, МСК (пусто = всегда открыто)</label><div class="chips"><input name="h_from" type="time" value="${esc((m.hours || {}).from || '')}"><input name="h_to" type="time" value="${esc((m.hours || {}).to || '')}"></div></div>
-    <div class="field"><label>Текст вне рабочих часов</label><textarea name="after_hours_text" maxlength="300">${esc(m.after_hours_text || '')}</textarea></div>`;
+    <div class="field"><label>Текст вне рабочих часов</label><textarea name="after_hours_text" maxlength="300">${esc(m.after_hours_text || '')}</textarea></div>
+    <div class="field"><label>Автоответ клиенту сразу после заявки (в MAX)</label><textarea name="ack_text" maxlength="300" placeholder="Заявка получена, ответим в течение рабочего дня.">${esc(m.ack_text || '')}</textarea></div>`;
   const banner = `<label class="consent"><input type="checkbox" name="enabled"${bn.enabled ? ' checked' : ''}><span>Показывать баннер</span></label>
     <div class="field"><label>Текст</label><input name="text" maxlength="200" value="${esc(bn.text || '')}"></div>
     <div class="field"><label>Текст кнопки</label><input name="button_text" maxlength="40" value="${esc(bn.button_text || '')}"></div>
@@ -113,12 +118,20 @@ async function contentScreen() {
   const sources = `<div class="field"><label>По одной строке: код | название | приветствие</label><textarea name="lines" rows="6" placeholder="src_channel | Канал | Привет из канала!">${esc(Object.entries(src).map(([k, x]) => `${k} | ${x.title} | ${x.greeting || ''}`).join('\n'))}</textarea></div>
     <p class="meta">Код — латиница, цифры, _ и -, без «src_». Например, строка <code>channel | Канал | Привет!</code> работает для ссылки <code>…?startapp=src_channel</code>.</p>`;
   const faqf = `<div class="field"><label>Вопрос на первой строке, ответ ниже; вопросы разделяются строкой ---</label><textarea name="faq" rows="10">${esc(faq.map(x => `${x.q}\n${x.a}`).join('\n---\n'))}</textarea></div>`;
-  shell(`<p class="note">Изменения видны всем пользователям примерно через минуту. Любую версию можно вернуть.</p>${sec('mode', mode)}${sec('banner', banner)}${sec('prices', prices)}${sec('calc', calc)}${sec('sources', sources)}${sec('faq', faqf)}`);
+  const templates = `<div class="field"><label>Название на первой строке, текст ниже; шаблоны разделяются строкой ---</label><textarea name="tpl" rows="10">${esc(tpl.map(x => `${x.title}\n${x.text}`).join('\n---\n'))}</textarea></div>`;
+  const promosForm = `<div class="field"><label>По одной строке: КОД | процент или сумма в ₽ (например 10% или 500) | с (ГГГГ-ММ-ДД) | по | лимит | выкл</label><textarea name="lines" rows="6" placeholder="START10 | 10% | 2026-11-01 | 2026-11-30 | 20">${esc(Object.entries(promos).map(([k, x]) => [k, x.percent ? x.percent + '%' : x.amount, x.from || '', x.to || '', x.limit || '', x.enabled === false ? 'выкл' : ''].join(' | ').replace(/( \| )+$/, '')).join('\n'))}</textarea></div>
+    <p class="meta">Клиент видит поле «Промокод» в форме заявки, только если есть хотя бы один действующий код. Лимит 0 или пусто — без ограничения.</p>`;
+  const flagsForm = `<div class="field"><label>По одной строке: функция | вкл/выкл | площадки через запятую | источники через запятую | процент пользователей</label><textarea name="lines" rows="5" placeholder="calc | вкл | max,telegram | | 100">${esc(Object.entries(flg).map(([k, x]) => [k, x.on ? 'вкл' : 'выкл', (x.platforms || []).join(','), (x.sources || []).join(','), x.percent ?? 100].join(' | ')).join('\n'))}</textarea></div>
+    <p class="meta">Функции: <b>calc</b> — калькулятор стоимости, <b>promo</b> — поле промокода. Если функции здесь нет, она включена всем.</p>`;
+  shell(`<p class="note">Изменения видны всем пользователям примерно через минуту. Любую версию можно вернуть.</p>${sec('mode', mode)}${sec('templates', templates)}${sec('promos', promosForm)}${sec('flags', flagsForm)}${sec('banner', banner)}${sec('prices', prices)}${sec('calc', calc)}${sec('sources', sources)}${sec('faq', faqf)}`);
 }
 
 function formValue(key, f) {
   const g = n => f.elements[n];
-  if (key === 'mode') return { closed: g('closed').checked, closed_text: g('closed_text').value, after_hours_text: g('after_hours_text').value, hours: { from: g('h_from').value, to: g('h_to').value } };
+  if (key === 'templates') return g('tpl').value.split(/\n---\n?/).map(x => x.trim()).filter(Boolean).map(x => { const [title, ...text] = x.split('\n'); return { title: title.trim(), text: text.join('\n').trim() }; });
+  if (key === 'promos') { const o = {}; g('lines').value.split('\n').map(x => x.trim()).filter(Boolean).forEach(line => { const [code, val = '', from = '', to = '', limit = '', off = ''] = line.split('|').map(x => x.trim()); const isPct = /%$/.test(val); const n = parseInt(val, 10); if (code) o[code.toUpperCase()] = { ...(isPct ? { percent: n } : { amount: n }), from, to, limit: parseInt(limit, 10) || 0, enabled: !/^(выкл|off|0)$/i.test(off) }; }); return o; }
+  if (key === 'flags') { const o = {}; g('lines').value.split('\n').map(x => x.trim()).filter(Boolean).forEach(line => { const [name, on = 'вкл', pl = '', so = '', pc = ''] = line.split('|').map(x => x.trim()); if (name) o[name] = { on: !/^(выкл|off|0|нет)$/i.test(on), platforms: pl.split(',').map(x => x.trim()).filter(Boolean), sources: so.split(',').map(x => x.trim()).filter(Boolean), percent: pc === '' ? 100 : parseInt(pc, 10) }; }); return o; }
+  if (key === 'mode') return { closed: g('closed').checked, closed_text: g('closed_text').value, after_hours_text: g('after_hours_text').value, ack_text: g('ack_text').value, hours: { from: g('h_from').value, to: g('h_to').value } };
   if (key === 'banner') return { enabled: g('enabled').checked, text: g('text').value, button_text: g('button_text').value, button_link: g('button_link').value, from: g('from').value, to: g('to').value };
   if (key === 'prices') { const o = {}; (CONTENT.sv.services || []).forEach(x => { const val = g('p_' + x.id).value, hid = g('h_' + x.id).checked; if (val !== '' || hid) o[x.id] = { ...(val !== '' ? { priceFrom: parseInt(val, 10) } : {}), hidden: hid }; }); return o; }
   if (key === 'calc') { const types = {}; (CONTENT.pr.types || []).forEach(x => { const val = g('c_' + x.id).value; if (val !== '') types[x.id] = { base: parseInt(val, 10) }; }); const sp = g('spread').value; return { types, ...(sp !== '' ? { spread: parseFloat(sp) } : {}) }; }
@@ -137,18 +150,21 @@ async function leads() {
       <b>${esc(l.name || (l.username ? '@' + l.username : '') || l.contact || 'Без имени')}</b>
       <span>${esc((l.task || '').slice(0, 140))}</span>
       <span class="tag">${ST[l.status] || l.status}</span></button>`).join('') || '<p class="note">Заявок нет.</p>';
-  shell(`${off}<div class="chips">${f('', 'Активные')}${Object.entries(ST).map(([k, v]) => f(k, v)).join('')}</div>${list}`);
+  shell(`${off}<div class="chips">${f('', 'Активные')}${Object.entries(ST).map(([k, v]) => f(k, v)).join('')}</div>${list}<button class="btn btn-wide" type="button" data-adm-csv style="margin-top:16px">Скопировать все заявки (CSV)</button>`);
 }
 
+let TPL = null;
+async function templates() { if (TPL) return TPL; const c = await api('admin/config'); TPL = (c.blocks && c.blocks.templates && c.blocks.templates.value) || []; return TPL; }
 async function leadCard(id) {
-  const d = await api(`admin/leads/${id}`);
+  TPL = null;
+  const [d, tpls] = [await api(`admin/leads/${id}`), await templates()];
   if (!d.ok) return leads();
   const l = d.lead;
   const kv = (k, v) => v ? `<p class="meta"><b>${k}:</b> ${esc(v)}</p>` : '';
   const msgs = (d.messages || []).map(m => `<p class="meta">${dt(m.created_at)} · ${m.ok ? 'отправлено' : 'ошибка: ' + esc(m.error || '')}<br>${esc(m.text)}</p>`).join('');
   shell(`<button class="back" type="button" data-adm-tab="leads">‹ Все заявки</button>
     <div class="card"><p class="eyebrow">Заявка #${l.id} · ${dt(l.created_at)}</p>
-      ${kv('Кто', [l.name, l.username && '@' + l.username].filter(Boolean).join(' '))}${kv('Контакт', l.contact)}${kv('Площадка', l.platform)}${kv('Источник', l.src)}
+      ${kv('Кто', [l.name, l.username && '@' + l.username].filter(Boolean).join(' '))}${kv('Контакт', l.contact)}${kv('Площадка', l.platform)}${kv('Источник', l.src)}${kv('Промокод', l.promo_code)}
       ${kv('Бизнес', l.biz)}${kv('Услуга', l.svc)}${kv('Задача', l.task)}${kv('Бюджет', l.budget)}${kv('Срок', l.when_text)}${kv('Расчёт', l.calc)}
       <p class="meta">Согласие: ${dt(l.consent_at)}, версия ${esc(l.consent_version)}</p></div>
     <div class="field"><label for="a-st">Статус</label><select id="a-st">${Object.entries(ST).map(([k, v]) => `<option value="${k}"${k === l.status ? ' selected' : ''}>${v}</option>`).join('')}</select></div>
@@ -158,8 +174,11 @@ async function leadCard(id) {
     <div class="field"><label for="a-lost">Причина отказа (обязательна для статуса «Отказ»)</label><select id="a-lost"><option value="">—</option>${LOST.map(x => `<option${x === l.lost_reason ? ' selected' : ''}>${x}</option>`).join('')}</select></div>
     <div class="field"><label for="a-tags">Теги через запятую</label><input id="a-tags" value="${esc((l.tags || []).join(', '))}" placeholder="горячий, бот"></div>
     <div class="field"><label for="a-note">Заметка (видите только вы)</label><textarea id="a-note">${esc(l.note || '')}</textarea></div>
+    <div class="card"><p class="eyebrow" style="margin:0 0 6px">История заметок</p>${(d.notes || []).map(n => `<p class="meta">${dt(n.at)} — ${esc(n.text)}</p>`).join('') || '<p class="meta">Пока нет.</p>'}
+      <div class="field"><textarea id="a-newnote" placeholder="Новая запись: созвонились, договорились, ждём бриф…"></textarea></div><button class="btn" type="button" data-adm-addnote="${l.id}">Добавить запись</button></div>
     ${l.first_response_at ? `<p class="meta">Первый ответ: ${dt(l.first_response_at)}</p>` : `<button class="btn btn-wide" type="button" data-adm-responded="${l.id}">Я уже ответил(а) клиенту</button>`}
     <button class="btn btn-wide" type="button" data-adm-save="${l.id}">Сохранить</button>
+    ${tpls.length ? `<p class="meta" style="margin:12px 0 4px">Быстрые ответы</p><div class="chips">${tpls.map((x, i) => `<button class="chip" type="button" data-adm-tpl="${i}">${esc(x.title)}</button>`).join('')}</div>` : ''}
     ${l.platform === 'web' ? '<p class="note">Веб-заявка: ответить можно только по контакту.</p>'
       : (l.platform === 'telegram' && !d.tg_api) ? (l.username ? `<a class="btn btn-accent btn-wide" href="https://t.me/${esc(l.username)}" target="_blank" rel="noopener">Ответить в Telegram @${esc(l.username)}</a><p class="note">Telegram недоступен серверу в РФ, ответ отправляется из вашего Telegram.</p>` : '<p class="note">У клиента нет username в Telegram: напишите ему из бота студии или попросите контакт.</p>') : `
     <div class="field"><label for="a-reply">Ответ клиенту в ${l.platform === 'max' ? 'MAX' : 'Telegram'}</label><textarea id="a-reply" placeholder="Здравствуйте! Спасибо за заявку…"></textarea></div>
@@ -209,25 +228,40 @@ async function post() {
 
 /* ---------- Воронка ---------- */
 async function funnel(days = 30) {
-  const d = await api(`admin/funnel?days=${days}`);
+  const [d, m] = await Promise.all([api(`admin/funnel?days=${days}`), api(`admin/metrics?days=${days}`)]);
   const t = d.total || {};
+  const num = n => new Intl.NumberFormat('ru-RU').format(n || 0);
   const pct = (a, b) => b ? Math.round(a * 100 / b) + '%' : '—';
-  const rows = (d.sources || []).map(([src, v]) => `<tr><td>${esc(src)}</td><td>${v.open}</td><td>${v.calc}</td><td>${v.brief}</td><td>${v.lead}</td><td>${pct(v.lead, v.open)}</td></tr>`).join('');
+  const frows = (d.sources || []).map(([src, v]) => `<tr><td>${esc(src)}</td><td>${v.open}</td><td>${v.calc}</td><td>${v.brief}</td><td>${v.lead}</td></tr>`).join('');
+  const srows = (m.by_source || []).map(x => `<tr><td>${esc(x.src)}</td><td>${x.leads}</td><td>${x.won}</td></tr>`).join('');
+  const lost = (m.lost_reasons || []).map(x => `${esc(x.lost_reason)}: <b>${x.n}</b>`).join(' · ');
+  const few = (m.total_leads || 0) < 20 ? '<p class="meta">Заявок пока мало: проценты не показываем, смотрите числа.</p>' : '';
   shell(`<div class="chips">${[7, 30, 90].map(n => `<button class="chip" type="button" data-adm-days="${n}"${n === days ? ' aria-pressed="true"' : ''}>${n} дней</button>`).join('')}</div>
     <div class="card"><p class="eyebrow">За ${days} дней</p>
-      <p>Открыли приложение: <b>${t.open || 0}</b></p><p>Досчитали калькулятор: <b>${t.calc || 0}</b> (${pct(t.calc, t.open)})</p>
-      <p>Открыли заявку: <b>${t.brief || 0}</b></p><p>Отправили заявку: <b>${t.lead || 0}</b> (${pct(t.lead, t.open)})</p></div>
-    ${rows ? `<div class="card adm-table"><table><thead><tr><th>Источник</th><th>Откр.</th><th>Кальк.</th><th>Форма</th><th>Заявки</th><th>Конв.</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="note">Данных пока нет.</p>'}
-    <p class="note">Счётчики обезличены: без имён и ID.</p>`);
+      <p>Заявок: <b>${m.total_leads || 0}</b> · Оплачено: <b>${num(m.paid_rub)} ₽</b></p>
+      <p>Первый ответ (медиана): <b>${m.response_median_min == null ? '—' : m.response_median_min < 60 ? Math.round(m.response_median_min) + ' мин' : Math.round(m.response_median_min / 60) + ' ч'}</b> <span class="meta">по ${m.response_n || 0} заявкам</span></p>
+      <p>Предложений на руках: <b>${(m.offers || {}).n || 0}</b>${(m.offers || {}).n ? ` <span class="meta">старейшее — ${(m.offers || {}).oldest} дн.</span>` : ''}</p>
+      ${lost ? `<p>Причины отказов: ${lost}</p>` : ''}${few}</div>
+    ${srows ? `<div class="card adm-table"><p class="eyebrow">Заявки по источникам</p><table><thead><tr><th>Источник</th><th>Заявок</th><th>Договор/закрыто</th></tr></thead><tbody>${srows}</tbody></table></div>` : ''}
+    <div class="card"><p class="eyebrow">Воронка приложения</p>
+      <p>Открыли: <b>${t.open || 0}</b> · Калькулятор: <b>${t.calc || 0}</b> · Форма: <b>${t.brief || 0}</b> · Заявка: <b>${t.lead || 0}</b>${(t.open || 0) >= 50 ? ` (${pct(t.lead, t.open)})` : ''}</p></div>
+    ${frows ? `<div class="card adm-table"><table><thead><tr><th>Источник</th><th>Откр.</th><th>Кальк.</th><th>Форма</th><th>Заявки</th></tr></thead><tbody>${frows}</tbody></table></div>` : ''}
+    ${(m.promos || []).length ? `<div class="card"><p class="eyebrow">Промокоды</p><p>${m.promos.map(x => `${esc(x.promo_code)}: <b>${x.n}</b>`).join(' · ')}</p></div>` : ''}
+    <p class="note">Счётчики воронки обезличены: без имён и ID.</p>`);
 }
 
 /* ---------- События ---------- */
 function toastMsg(t) { const el = $('#toast'); if (!el) return; el.textContent = t; el.hidden = false; setTimeout(() => { el.hidden = true; }, 4000); }
 
 document.addEventListener('click', async e => {
-  const t = e.target.closest('[data-adm-quick],[data-adm-responded],[data-cfg-hist],[data-cfg-rb],[data-adm-copy],[data-adm-inv],[data-adm-invfor],[data-adm-tab],[data-adm-filter],[data-adm-lead],[data-adm-save],[data-adm-reply],[data-adm-del],[data-adm-cancel],[data-adm-days]');
+  const t = e.target.closest('[data-adm-csv],[data-adm-addnote],[data-adm-tpl],[data-adm-quick],[data-adm-responded],[data-cfg-hist],[data-cfg-rb],[data-adm-copy],[data-adm-inv],[data-adm-invfor],[data-adm-tab],[data-adm-filter],[data-adm-lead],[data-adm-save],[data-adm-reply],[data-adm-del],[data-adm-cancel],[data-adm-days]');
   if (!t) return;
   const d = t.dataset; haptic();
+  if ('admTpl' in d) { const x = TPL[+d.admTpl]; const el = $('#a-reply'); if (el) { el.value = el.value ? el.value + '\n' + x.text : x.text; el.focus(); } else { try { await navigator.clipboard.writeText(x.text); toastMsg('Текст скопирован — вставьте в чат клиента'); } catch { toastMsg('Не удалось скопировать'); } } return; }
+  if (d.admAddnote) { const el = $('#a-newnote'); const text = (el.value || '').trim(); if (!text) return toastMsg('Напишите запись'); const r = await api(`admin/leads/${d.admAddnote}/notes`, { method: 'POST', body: JSON.stringify({ text }) }); toastMsg(r.ok ? 'Записано' : 'Не получилось'); return leadCard(d.admAddnote); }
+  if ('admCsv' in d) {
+    try { const r = await fetch('/api/admin/export/leads.csv', { headers: { 'X-Platform': P.kind, 'X-Init-Data': P.sdk?.initData || '' } }); if (!r.ok) return toastMsg('Не удалось выгрузить'); const text = await r.text(); try { await navigator.clipboard.writeText(text); toastMsg('CSV скопирован — вставьте в таблицу'); } catch { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = 'leads.csv'; a.click(); toastMsg('Файл leads.csv'); } } catch { toastMsg('Ошибка выгрузки'); } return;
+  }
   if ('admQuick' in d) { const x = new Date(Date.now() + 3 * 3600e3 + (+d.admQuick) * 86400e3); const el = $('#a-na-at'); if (el) el.value = `${x.getUTCFullYear()}-${pad(x.getUTCMonth() + 1)}-${pad(x.getUTCDate())}T10:00`; return; }
   if (d.admResponded) { const r = await api(`admin/leads/${d.admResponded}`, { method: 'PATCH', body: JSON.stringify({ responded: true }) }); toastMsg(r.ok ? 'Отмечено' : 'Не получилось'); return leadCard(d.admResponded); }
   if (d.cfgHist) {

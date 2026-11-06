@@ -59,6 +59,18 @@ async function loadConfig() {
   if (!cfg) { try { cfg = JSON.parse(localStorage.getItem('cfg') || 'null'); } catch {} }
   if (cfg && cfg.blocks) CFG = cfg;
 }
+/* Флаги функций из пульта: площадка, источник, доля пользователей; без настройки функция включена */
+const anonId = (() => { try { let v = localStorage.getItem('aid'); if (!v) { v = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('aid', v); } return v; } catch { return 'x'; } })();
+const bucket = str => { let h = 2166136261; for (const c of str) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0) % 100; };
+function flag(name) {
+  const f = (CFG.blocks.flags || {})[name];
+  if (!f) return true;
+  if (!f.on) return false;
+  if (f.platforms && f.platforms.length && !f.platforms.includes(P.kind)) return false;
+  if (f.sources && f.sources.length && !f.sources.includes(src)) return false;
+  if (typeof f.percent === 'number' && f.percent < 100 && bucket(anonId + name) >= f.percent) return false;
+  return true;
+}
 const today = () => new Date().toISOString().slice(0, 10);
 function activeBanner() {
   const b = CFG.blocks.banner;
@@ -134,7 +146,7 @@ function home() {
     <p class="eyebrow" style="margin-top:28px">Прозрачный процесс</p>
     <h2 class="sec" style="margin-top:0">Как работаем</h2>
     <ol class="steps">${D.process.map((s, i) => { const [h, ...r] = s.split(' — '); return `<li><span class="n">0${i + 1}</span><div><b>${esc(h)}</b>${r.length ? `<span>${esc(r.join(' — '))}</span>` : ''}</div></li>`; }).join('')}</ol>
-    <div class="actions"><a class="btn btn-wide" href="#/calc">Рассчитать стоимость ${ic('arrow')}</a><a class="btn btn-wide" href="#/faq">Частые вопросы ${ic('arrow')}</a></div>
+    <div class="actions">${flag('calc') ? `<a class="btn btn-wide" href="#/calc">Рассчитать стоимость ${ic('arrow')}</a>` : ''}<a class="btn btn-wide" href="#/faq">Частые вопросы ${ic('arrow')}</a></div>
     ${C.channelTelegram || C.channelMax ? `<h2 class="sec">Канал студии</h2><p class="meta">Кейсы, разборы и цены — подписывайтесь.</p>
     <div class="actions">${C.channelTelegram ? `<button class="btn btn-wide" type="button" data-link="${esc(C.channelTelegram)}">Канал в Telegram ${ic('out')}</button>` : ''}${C.channelMax ? `<button class="btn btn-wide" type="button" data-link="${esc(C.channelMax)}">Канал в MAX ${ic('out')}</button>` : ''}</div>` : ''}${footer()}`;
   setMain('Обсудить проект', () => go('#/brief'));
@@ -152,7 +164,7 @@ function services() {
       ${checks(s.summary)}<span class="more">Подробнее ${ic('out')}</span></a>`).join('') || `<div class="card" style="text-align:center"><p class="meta">Ничего не найдено. Измените фильтры.</p></div>`}</div>
     <h2 class="sec">Дополнительно</h2><div class="card"><ul class="lines" style="border-top:0">${S.addons.map(([n, p]) => `<li><span style="flex:1">${esc(n)}</span><b>${esc(p)}</b></li>`).join('')}</ul></div>
     <h2 class="sec">Условия</h2><div class="card">${checks(S.rules)}</div>${footer()}`;
-  setMain('Рассчитать стоимость', () => go('#/calc'));
+  if (flag('calc')) setMain('Рассчитать стоимость', () => go('#/calc')); else setMain('Обсудить проект', () => go('#/brief'));
 }
 
 function service(id) {
@@ -291,6 +303,7 @@ function brief() {
         <textarea id="b-task" name="task" required aria-describedby="b-err" placeholder="Что должно измениться для клиентов?">${esc(b.task || '')}</textarea>
         <span class="err" id="b-err" role="alert" hidden>Опишите задачу, чтобы мы поняли запрос.</span></div>
       ${srv.leads && P.kind === 'web' ? `<div class="field"><label for="b-contact">Как с вами связаться *</label><input id="b-contact" name="contact" placeholder="Телефон, e-mail или @username" value="${esc(b.contact || '')}"></div>` : ''}
+      ${CFG.has_promos && flag('promo') ? `<div class="field"><label for="b-promo">Промокод</label><div class="chips"><input id="b-promo" name="promo" autocapitalize="characters" value="${esc(b.promo || '')}" placeholder="Если есть"><button class="chip" type="button" data-promo-check>Проверить</button></div><span class="meta" id="b-promo-res" role="status"></span></div>` : ''}
       <div class="field"><label for="b-budget">Бюджет</label><select id="b-budget" name="budget">${['Выбрать диапазон', 'до 50 000 ₽', '50–100 тыс. ₽', '100–200 тыс. ₽', 'более 200 тыс. ₽'].map(o => `<option${o === b.budget ? ' selected' : ''}>${o}</option>`).join('')}</select></div>
       <div class="field"><label for="b-when">Когда нужно</label><select id="b-when" name="when">${['Пока без точной даты', 'В этом месяце', 'Срочно'].map(o => `<option${o === b.when ? ' selected' : ''}>${o}</option>`).join('')}</select></div>
       ${b.calc ? `<div class="card"><p class="eyebrow" style="margin:0 0 4px">Расчёт из калькулятора</p><p class="meta">${esc(b.calc)}</p></div>` : ''}
@@ -319,6 +332,7 @@ async function sendBrief() {
   if (!/^Выбрать/.test(f.budget)) lines.push(`Бюджет: ${f.budget}`);
   lines.push(`Срок: ${f.when}`);
   if (state.brief.calc) lines.push(state.brief.calc);
+  if (f.promo && f.promo.trim()) lines.push(`Промокод: ${f.promo.trim().toUpperCase()}`);
   if (src) lines.push(`Источник: ${src}`);
   lines.push(`Площадка: ${P.kind}`);
   lastText = lines.join('\n');
@@ -326,7 +340,7 @@ async function sendBrief() {
     if (P.kind === 'web' && !String(f.contact || '').trim()) { toast('Укажите, как с вами связаться'); form.querySelector('#b-contact')?.focus(); return; }
     try {
       const r = await fetch('/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Platform': P.kind, 'X-Init-Data': P.sdk?.initData || '' },
-        body: JSON.stringify({ biz: f.biz, svc: f.svc, task: f.task, budget: /^Выбрать/.test(f.budget) ? '' : f.budget, when: f.when, calc: state.brief.calc || '', contact: f.contact || '', src, consent: true }) });
+        body: JSON.stringify({ biz: f.biz, svc: f.svc, task: f.task, budget: /^Выбрать/.test(f.budget) ? '' : f.budget, when: f.when, calc: state.brief.calc || '', contact: f.contact || '', promo: (f.promo || '').trim(), src, consent: true }) });
       const j = await r.json().catch(() => ({}));
       if (j.stored) { track('lead'); hapticOk(); return ready(true); }
       if (r.status !== 202) toast(j.error || 'Не удалось отправить, отправьте текст в чат.');
@@ -373,7 +387,7 @@ function route() {
   if (a === 'services') b ? service(b) : services();
   else if (a === 'solutions') solutions();
   else if (a === 'cases') b ? caseScreen(b) : cases();
-  else if (a === 'calc') calc();
+  else if (a === 'calc') (flag('calc') ? calc() : go('#/brief'));
   else if (a === 'faq') faq();
   else if (a === 'privacy' || a === 'terms' || a === 'consent') legal(a);
   else if (a === 'docs') docs();
@@ -389,8 +403,15 @@ function back() {
   history.length > 1 ? history.back() : go('#/');
 }
 
-document.addEventListener('click', e => {
+document.addEventListener('click', async e => {
   const z = e.target.closest('[data-zoom]'); if (z) return zoom(+z.dataset.zoom);
+  const pc = e.target.closest('[data-promo-check]');
+  if (pc) {
+    const code = ($('#b-promo').value || '').trim(); const out = $('#b-promo-res'); if (!code) { out.textContent = ''; return; }
+    out.textContent = 'Проверяем…';
+    try { const r = await (await fetch('/api/promo/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) })).json(); out.textContent = r.text || ''; haptic(); } catch { out.textContent = 'Не удалось проверить'; }
+    return;
+  }
   const t = e.target.closest('[data-link],[data-dir],[data-f-dir],[data-f-plat],[data-calc],[data-calc-restart],[data-share],[data-back]'); if (!t) return;
   const d = t.dataset;
   if (d.link) { e.preventDefault(); return openLink(d.link); }

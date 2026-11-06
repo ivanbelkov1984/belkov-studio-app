@@ -102,3 +102,13 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_action_at timestamptz;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_reason text;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_response_at timestamptz;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}';
+
+-- P1: история заметок по заявке и промокод
+CREATE TABLE IF NOT EXISTS lead_notes (
+  id      bigserial PRIMARY KEY,
+  lead_id bigint NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  at      timestamptz NOT NULL DEFAULT now(),
+  text    text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS lead_notes_idx ON lead_notes (lead_id, at);
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS promo_code text;

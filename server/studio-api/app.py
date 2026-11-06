@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import hmac
 import json
 import logging
@@ -18,6 +19,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl
 
+import csv
 import secrets
 
 import aiohttp
@@ -279,18 +281,25 @@ async def lead(request):
         return web.json_response({"ok": False, "error": "Не удалось подтвердить данные запуска, обновите приложение"}, status=401)
     name = clean(" ".join(filter(None, [(user or {}).get("first_name"), (user or {}).get("last_name")])), 200)
     pool = request.app["pool"]
+    promo_code, promo_note = None, ""
+    if b.get("promo"):
+        found = await find_promo(pool, b.get("promo"))
+        if found:
+            promo_code, promo_note = found[0], promo_text(*found)
     lid = await pool.fetchval(
-        "INSERT INTO leads(platform,user_id,username,name,contact,biz,svc,task,budget,when_text,calc,src,consent_at,consent_version) "
-        "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),$13) RETURNING id",
+        "INSERT INTO leads(platform,user_id,username,name,contact,biz,svc,task,budget,when_text,calc,src,consent_at,consent_version,promo_code) "
+        "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),$13,$14) RETURNING id",
         plat, str(user["id"]) if user else None, clean((user or {}).get("username"), 100) or None, name or None,
         contact or None, clean(b.get("biz"), 300), slug(b.get("svc")), task, clean(b.get("budget"), 100),
-        clean(b.get("when"), 100), clean(b.get("calc"), 1000), slug(b.get("src")), CONSENT_VERSION)
+        clean(b.get("when"), 100), clean(b.get("calc"), 1000), slug(b.get("src")), CONSENT_VERSION, promo_code)
     await audit(pool, "lead_created", lid, plat)
     who = ("@" + user["username"]) if user and user.get("username") else (name or contact or "без имени")
-    msg = f"Новая заявка #{lid} ({plat})\nОт: {who}\nЗадача: {task[:500]}"
+    msg = f"Новая заявка #{lid} ({plat})\nОт: {who}\nЗадача: {task[:500]}" + (f"\n{promo_note}" if promo_note else "")
     if b.get("budget"):
         msg += f"\nБюджет: {clean(b.get('budget'), 100)}"
     asyncio.create_task(request.app["msg"].notify_owner(msg + "\n\nОткройте пульт в боте студии."))
+    mode = ((await published_blocks(pool)).get("mode") or {}).get("value")
+    asyncio.create_task(autoreply(request.app, plat, user, mode))
     return web.json_response({"ok": True, "stored": True, "id": lid})
 
 
@@ -340,7 +349,9 @@ async def lead_get(request):
     if not r:
         return web.json_response({"ok": False}, status=404)
     msgs = await pool.fetch("SELECT * FROM lead_messages WHERE lead_id=$1 ORDER BY created_at", lid)
-    return web.json_response({"ok": True, "lead": row(r), "messages": [row(m) for m in msgs], "tg_api": TG_API_ENABLED})
+    notes = await pool.fetch("SELECT * FROM lead_notes WHERE lead_id=$1 ORDER BY at", lid)
+    return web.json_response({"ok": True, "lead": row(r), "messages": [row(m) for m in msgs], "notes": [row(n) for n in notes],
+                              "tg_api": TG_API_ENABLED})
 
 
 async def lead_patch(request):
@@ -505,6 +516,7 @@ def v_mode(v):
     out = {"closed": bool(v.get("closed")),
            "closed_text": s_str(v.get("closed_text", ""), 300, "текст «приём закрыт»"),
            "after_hours_text": s_str(v.get("after_hours_text", ""), 300, "текст вне часов"),
+           "ack_text": s_str(v.get("ack_text", ""), 300, "автоответ на заявку"),
            "hours": {"from": str(hours.get("from", "")), "to": str(hours.get("to", ""))}}
     for k in ("from", "to"):
         need(out["hours"][k] == "" or TIME_RE.match(out["hours"][k]), "часы: формат ЧЧ:ММ")
@@ -574,8 +586,60 @@ def v_faq(v):
              "a": s_str((x or {}).get("a", ""), 1500, "ответ", allow_empty=False)} for x in v]
 
 
-VALIDATORS = {"mode": v_mode, "banner": v_banner, "prices": v_prices, "calc": v_calc, "sources": v_sources, "faq": v_faq}
-BLOCK_TITLES = {"mode": "Режим работы", "banner": "Баннер", "prices": "Цены услуг", "calc": "Калькулятор",
+PROMO_RE = re.compile(r"^[A-Z0-9_-]{2,20}$")
+
+
+def v_templates(v):
+    need(isinstance(v, list) and len(v) <= 20, "шаблоны: список до 20")
+    return [{"title": s_str((x or {}).get("title", ""), 40, "название шаблона", allow_empty=False),
+             "text": s_str((x or {}).get("text", ""), 1000, "текст шаблона", allow_empty=False)} for x in v]
+
+
+def v_promos(v):
+    need(isinstance(v, dict) and len(v) <= 50, "промокоды: нужен объект")
+    out = {}
+    for k, x in v.items():
+        code = str(k).strip().upper()
+        need(PROMO_RE.match(code), f"код «{k}»: A-Z, 0-9, _ и -, от 2 до 20 знаков")
+        need(isinstance(x, dict), "промокод: нужен объект")
+        pct, amt = x.get("percent"), x.get("amount")
+        need((pct is None) != (amt is None), f"{code}: укажите либо процент, либо сумму")
+        if pct is not None:
+            need(isinstance(pct, int) and not isinstance(pct, bool) and 1 <= pct <= 90, f"{code}: процент от 1 до 90")
+        if amt is not None:
+            need(isinstance(amt, int) and not isinstance(amt, bool) and 1 <= amt <= 1_000_000, f"{code}: сумма от 1 до 1 000 000")
+        lim = x.get("limit", 0) or 0
+        need(isinstance(lim, int) and not isinstance(lim, bool) and 0 <= lim <= 100000, f"{code}: лимит от 0 до 100000")
+        item = {"enabled": bool(x.get("enabled", True)), "limit": lim, "title": s_str(x.get("title", ""), 80, f"{code}: описание"),
+                "from": str(x.get("from", "") or ""), "to": str(x.get("to", "") or "")}
+        for dk in ("from", "to"):
+            need(item[dk] == "" or DATE_RE.match(item[dk]), f"{code}: даты в формате ГГГГ-ММ-ДД")
+        if pct is not None:
+            item["percent"] = pct
+        else:
+            item["amount"] = amt
+        out[code] = item
+    return out
+
+
+def v_flags(v):
+    need(isinstance(v, dict) and len(v) <= 30, "флаги: нужен объект")
+    out = {}
+    for k, x in v.items():
+        k = slug(k, 24)
+        need(k and isinstance(x, dict), "флаг: неверное имя")
+        plats = x.get("platforms") or []
+        need(isinstance(plats, list) and all(p in PLATFORMS for p in plats), f"флаг «{k}»: площадки telegram, max, web")
+        srcs = [slug(t) for t in (x.get("sources") or [])][:20]
+        pct = x.get("percent", 100)
+        need(isinstance(pct, int) and not isinstance(pct, bool) and 0 <= pct <= 100, f"флаг «{k}»: процент от 0 до 100")
+        out[k] = {"on": bool(x.get("on")), "platforms": plats, "sources": [t for t in srcs if t], "percent": pct}
+    return out
+
+
+VALIDATORS = {"templates": v_templates, "promos": v_promos, "flags": v_flags, "mode": v_mode, "banner": v_banner, "prices": v_prices, "calc": v_calc, "sources": v_sources, "faq": v_faq}
+PUBLIC_BLOCKS = {"mode", "banner", "prices", "calc", "sources", "faq", "flags"}   # шаблоны и промокоды наружу не отдаются
+BLOCK_TITLES = {"templates": "Шаблоны ответов", "promos": "Промокоды", "flags": "Флаги функций", "mode": "Режим работы", "banner": "Баннер", "prices": "Цены услуг", "calc": "Калькулятор",
                 "sources": "Источники", "faq": "FAQ"}
 
 
@@ -603,10 +667,11 @@ def work_state(mode: dict | None) -> str:
 async def config_get(request):
     """Публичный конфиг приложения: только опубликованные блоки (без служебных данных)."""
     blocks = await published_blocks(request.app["pool"])
-    values = {k: b["value"] for k, b in blocks.items()}
+    values = {k: b["value"] for k, b in blocks.items() if k in PUBLIC_BLOCKS}
+    has_promos = any(x.get("enabled") for x in (blocks.get("promos", {}).get("value") or {}).values())
     rev = max([b["updated_at"] for b in blocks.values()], default=None)
-    body = {"rev": rev.isoformat() if rev else "0", "blocks": values, "state": work_state(values.get("mode"))}
-    etag = '"' + hashlib.sha256((json.dumps(values, sort_keys=True, ensure_ascii=False) + body["state"]).encode()).hexdigest()[:20] + '"'
+    body = {"rev": rev.isoformat() if rev else "0", "blocks": values, "state": work_state(values.get("mode")), "has_promos": has_promos}
+    etag = '"' + hashlib.sha256((json.dumps(values, sort_keys=True, ensure_ascii=False) + body["state"] + str(has_promos)).encode()).hexdigest()[:20] + '"'
     if request.headers.get("If-None-Match") == etag:
         return web.Response(status=304, headers={"ETag": etag, "Cache-Control": "public, max-age=30, stale-while-revalidate=300"})
     return web.json_response(body, headers={"ETag": etag, "Cache-Control": "public, max-age=30, stale-while-revalidate=300"})
@@ -676,6 +741,117 @@ async def config_rollback(request):
     ver = await publish_block(request.app["pool"], key, value, f"{plat}:{user['id']}", f"откат к v{target}")
     await audit(request.app["pool"], "content_rollback", None, f"{key} v{target} -> v{ver}")
     return web.json_response({"ok": True, "version": ver})
+
+
+# ---------- Промокоды ----------
+async def find_promo(pool, code: str):
+    """Возвращает (код, данные) для действующего промокода или None."""
+    code = str(code or "").strip().upper()
+    if not PROMO_RE.match(code):
+        return None
+    blocks = await published_blocks(pool)
+    promos = (blocks.get("promos") or {}).get("value") or {}
+    p = promos.get(code)
+    if not p or not p.get("enabled"):
+        return None
+    today_s = datetime.now(MSK).strftime("%Y-%m-%d")
+    if (p.get("from") and today_s < p["from"]) or (p.get("to") and today_s > p["to"]):
+        return None
+    if p.get("limit"):
+        used = await pool.fetchval("SELECT count(*) FROM leads WHERE promo_code=$1", code)
+        if used >= p["limit"]:
+            return None
+    return code, p
+
+
+def promo_text(code: str, p: dict) -> str:
+    return f"Промокод {code}: скидка {p['percent']}%" if p.get("percent") else f"Промокод {code}: скидка {p['amount']} ₽"
+
+
+async def promo_check(request):
+    if not rate_ok("promo:" + client_ip(request), 20, 60):
+        return web.json_response({"ok": False, "error": "Слишком часто"}, status=429)
+    try:
+        b = await request.json()
+    except Exception:
+        return web.json_response({"ok": False}, status=400)
+    found = await find_promo(request.app["pool"], b.get("code"))
+    if not found:
+        return web.json_response({"ok": True, "valid": False, "text": "Промокод не найден или не действует"})
+    return web.json_response({"ok": True, "valid": True, "text": promo_text(*found)})
+
+
+async def autoreply(app, plat: str, user, mode: dict):
+    """Мгновенный автоответ клиенту MAX: подтверждение + сообщение вне рабочих часов."""
+    if plat != "max" or not user or not mode:
+        return
+    parts = []
+    if mode.get("ack_text"):
+        parts.append(mode["ack_text"])
+    if work_state(mode) == "after_hours" and mode.get("after_hours_text"):
+        parts.append(mode["after_hours_text"])
+    if parts:
+        await app["msg"].to_user("max", str(user["id"]), "\n\n".join(parts))
+
+
+# ---------- Заметки, метрики, экспорт ----------
+async def note_add(request):
+    lid = int(request.match_info["id"])
+    text = clean((await request.json()).get("text"), 2000)
+    if not text:
+        return web.json_response({"ok": False, "error": "пустая запись"}, status=400)
+    pool = request.app["pool"]
+    if not await pool.fetchval("SELECT 1 FROM leads WHERE id=$1", lid):
+        return web.json_response({"ok": False}, status=404)
+    await pool.execute("INSERT INTO lead_notes(lead_id, text) VALUES($1,$2)", lid, text)
+    await pool.execute("UPDATE leads SET updated_at=now() WHERE id=$1", lid)
+    return web.json_response({"ok": True})
+
+
+async def metrics(request):
+    days = max(1, min(365, int(request.query.get("days", "30"))))
+    pool = request.app["pool"]
+    by_src = await pool.fetch(
+        "SELECT COALESCE(NULLIF(src,''),'без метки') AS src, count(*)::int AS leads, "
+        "count(*) FILTER (WHERE status IN ('contract','done'))::int AS won "
+        "FROM leads WHERE created_at >= now() - make_interval(days => $1) GROUP BY 1 ORDER BY 2 DESC", days)
+    resp = await pool.fetchrow(
+        "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM first_response_at - created_at)/60) AS med, "
+        "count(*)::int AS n FROM leads WHERE first_response_at IS NOT NULL AND created_at >= now() - make_interval(days => $1)", days)
+    lost = await pool.fetch(
+        "SELECT lost_reason, count(*)::int AS n FROM leads WHERE status='lost' AND lost_reason IS NOT NULL "
+        "AND updated_at >= now() - make_interval(days => $1) GROUP BY 1 ORDER BY 2 DESC", days)
+    offers = await pool.fetchrow(
+        "SELECT count(*)::int AS n, COALESCE(max(extract(day from now() - updated_at)),0)::int AS oldest FROM leads WHERE status='offer'")
+    paid = await pool.fetchval(
+        "SELECT COALESCE(sum(amount_rub),0)::int FROM invoices WHERE status='paid' AND paid_at >= now() - make_interval(days => $1)", days)
+    promos = await pool.fetch(
+        "SELECT promo_code, count(*)::int AS n FROM leads WHERE promo_code IS NOT NULL AND created_at >= now() - make_interval(days => $1) GROUP BY 1 ORDER BY 2 DESC", days)
+    total = await pool.fetchval("SELECT count(*)::int FROM leads WHERE created_at >= now() - make_interval(days => $1)", days)
+    return web.json_response({"ok": True, "days": days, "total_leads": total,
+        "by_source": [dict(r) for r in by_src],
+        "response_median_min": round(resp["med"], 1) if resp["med"] is not None else None, "response_n": resp["n"],
+        "lost_reasons": [dict(r) for r in lost], "offers": dict(offers), "paid_rub": paid,
+        "promos": [dict(r) for r in promos]})
+
+
+def csv_safe(v):
+    t = "" if v is None else (v.isoformat() if isinstance(v, datetime) else (",".join(v) if isinstance(v, list) else str(v)))
+    return "'" + t if t[:1] in ("=", "+", "-", "@", "\t", "\r") else t
+
+
+async def export_leads(request):
+    rows = await request.app["pool"].fetch("SELECT * FROM leads ORDER BY created_at")
+    cols = ["id", "created_at", "platform", "username", "name", "contact", "biz", "svc", "task", "budget", "when_text", "src",
+            "promo_code", "status", "next_action", "next_action_at", "lost_reason", "tags", "first_response_at", "consent_at", "consent_version"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(cols)
+    for r in rows:
+        w.writerow([csv_safe(r[c]) for c in cols])
+    await audit(request.app["pool"], "export_leads", None, f"{len(rows)} rows")
+    return web.Response(text="\ufeff" + buf.getvalue(), content_type="text/csv", charset="utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="leads.csv"'})
 
 
 # ---------- Экран «Сегодня» ----------
@@ -949,6 +1125,7 @@ def make_app() -> web.Application:
     r.add_get("/api/health", health)
     r.add_get("/api/status", status)
     r.add_get("/api/config", config_get)
+    r.add_post("/api/promo/check", promo_check)
     r.add_post("/api/event", event)
     r.add_post("/api/lead", lead)
     r.add_get("/api/admin/whoami", whoami)
@@ -962,6 +1139,9 @@ def make_app() -> web.Application:
     r.add_post("/api/admin/posts", post_create)
     r.add_post("/api/admin/posts/{id:\\d+}/cancel", post_cancel)
     r.add_get("/api/admin/today", today)
+    r.add_get("/api/admin/metrics", metrics)
+    r.add_get("/api/admin/export/leads.csv", export_leads)
+    r.add_post("/api/admin/leads/{id:\\d+}/notes", note_add)
     r.add_get("/api/admin/config", admin_config_list)
     r.add_post("/api/admin/config/{key:[a-z_]+}", config_save)
     r.add_get("/api/admin/config/{key:[a-z_]+}/versions", config_versions)
