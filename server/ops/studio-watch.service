@@ -1,0 +1,5 @@
+[Unit]
+Description=Studio watchdog
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/bin/studio-watch.py

@@ -163,6 +163,15 @@ async function myScreen() {
     <p>${esc(l.task)}</p>
     ${l.replies.map(m => `<p class="meta"><b>Студия:</b> ${esc(m.text)}</p>`).join('')}
     ${l.invoices.map(i => i.status === 'paid' ? `<p class="meta">Счёт «${esc(i.title)}» — ${rub(i.amount_rub)}: оплачен</p>` : `<a class="btn btn-wide" href="#/pay/${esc(i.pub)}">Оплатить «${esc(i.title)}» — ${rub(i.amount_rub)}</a>`).join('')}</div>`).join('');
+  view.insertAdjacentHTML('beforeend', `<p class="note" style="margin-top:24px">Можно отозвать согласие и удалить заявки. Заявки по заключённому договору хранятся по закону.</p>
+    <div class="actions"><button class="btn btn-wide" type="button" id="my-del">Удалить мои данные</button></div>`);
+  $('#my-del').addEventListener('click', async e => {
+    const b = e.currentTarget;
+    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Нажмите ещё раз, чтобы удалить'; return; }
+    b.disabled = true;
+    let r = {}; try { r = await (await fetch('/api/my/delete', { method: 'POST', headers: { 'X-Platform': P.kind, 'X-Init-Data': P.sdk?.initData || '' } })).json(); } catch {}
+    if (r.ok) { srv.my = false; toast(`Удалено заявок: ${r.deleted}.${r.kept ? ' По договору сохранено: ' + r.kept + '.' : ''}`, 7000); myScreen(); } else { b.disabled = false; toast(r.error || 'Не удалось удалить, напишите в чат студии.'); }
+  });
   setMain('Новая заявка', () => go('#/brief'));
 }
 async function checkMy() {
@@ -458,6 +467,8 @@ window.addEventListener('hashchange', route);
   [S, D, PR, L] = await Promise.all(['data/services.json', 'data/content.json', 'data/pricing.json', 'data/legal.json'].map(u => fetch(u).then(r => r.json())));
   Object.assign(state.brief, (await load('brief')) || {});
   bindBack(); bindMain();
+  window.addEventListener('offline', () => toast('Нет связи с интернетом. Черновик заявки сохранён на устройстве.', 8000));
+  window.addEventListener('online', () => { $('#toast').hidden = true; });
   readStart();
   try { srv.leads = !!(await (await fetch('/api/status')).json()).leads; } catch {}
   await loadConfig();

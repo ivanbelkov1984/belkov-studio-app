@@ -329,6 +329,26 @@ async def my_requests(request):
     return web.json_response({"ok": True, "leads": out})
 
 
+async def my_delete(request):
+    """Отзыв согласия: клиент сам удаляет свои заявки. Договорные (contract, done) хранятся по закону."""
+    plat, user = identify(request)
+    if plat not in ("telegram", "max") or not user:
+        return web.json_response({"ok": False}, status=401)
+    if not rate_ok("mydel:" + str(user["id"]), 3, 3600):
+        return web.json_response({"ok": False, "error": "Слишком часто"}, status=429)
+    pool = request.app["pool"]
+    deleted = await pool.fetch(
+        "DELETE FROM leads WHERE platform=$1 AND user_id=$2 AND status <> ALL($3::text[]) RETURNING id",
+        plat, str(user["id"]), list(KEEP_STATUSES))
+    kept = await pool.fetchval(
+        "SELECT count(*)::int FROM leads WHERE platform=$1 AND user_id=$2", plat, str(user["id"]))
+    await audit(pool, "client_data_deleted", None, f"{plat}: удалено {len(deleted)}, сохранено по договору {kept}")
+    if deleted or kept:
+        asyncio.create_task(request.app["msg"].notify_owner(
+            f"Клиент ({plat}) отозвал согласие: удалено заявок {len(deleted)}, оставлено по договору {kept}."))
+    return web.json_response({"ok": True, "deleted": len(deleted), "kept": kept})
+
+
 # ---------- Пульт владельца ----------
 @web.middleware
 async def admin_guard(request, handler):
@@ -1155,6 +1175,7 @@ def make_app() -> web.Application:
     r.add_post("/api/event", event)
     r.add_post("/api/lead", lead)
     r.add_get("/api/my", my_requests)
+    r.add_post("/api/my/delete", my_delete)
     r.add_get("/api/admin/whoami", whoami)
     r.add_get("/api/admin/leads", leads_list)
     r.add_get("/api/admin/leads/{id:\\d+}", lead_get)

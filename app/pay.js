@@ -6,7 +6,13 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const rub = n => new Intl.NumberFormat('ru-RU').format(n) + ' ₽';
 
 let payTimer = 0;
+const payFooter = () => `<p class="note" style="margin-top:20px">Оплата услуг по <a href="#/terms">условиям работы</a>: возврат за неоказанную часть работ по договору. <a href="#/privacy">Политика обработки данных</a>. Вопросы по оплате: Telegram @${C.telegramUsername} или чат студии в MAX.</p>`;
 export async function payScreen(pub, silent) {
+  await payInner(pub, silent);
+  const v = document.getElementById('view');
+  if (!silent && v && !v.querySelector('[data-payfoot]')) v.insertAdjacentHTML('beforeend', payFooter().replace('<p ', '<p data-payfoot '));
+}
+async function payInner(pub, silent) {
   if (silent) { try { const d0 = await (await fetch(`/api/pay/${encodeURIComponent(pub)}`)).json(); if (d0.status !== 'paid') return; } catch { return; } }
   clearInterval(payTimer);
   const view = document.getElementById('view');
