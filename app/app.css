@@ -191,3 +191,5 @@ img { max-width: 100%; }
 .adm-table { overflow-x: auto; }
 .adm-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .adm-table th, .adm-table td { padding: 6px 8px; border-bottom: 1px solid var(--stroke); text-align: left; white-space: nowrap; }
+
+.card.promo { background: linear-gradient(135deg, var(--hero-a), var(--hero-b)); }

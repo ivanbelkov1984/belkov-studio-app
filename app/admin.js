@@ -6,7 +6,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ST = { new: 'Новая', work: 'В работе', offer: 'Предложение', contract: 'Договор', done: 'Закрыта', lost: 'Отказ' };
 const dt = s => s ? new Date(s).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
-let tab = 'leads', filter = '';
+let tab = 'today', filter = '';
 /* Подтверждение: нативное окно Telegram/MAX, иначе браузерное */
 const ask = msg => new Promise(res => { try { if (P.sdk?.showConfirm) return P.sdk.showConfirm(msg, ok => res(!!ok)); } catch {} res(window.confirm(msg)); });
 
@@ -25,10 +25,19 @@ export async function isOwner() {
   return ownerCache;
 }
 
+const LOST = ['цена', 'выбрали другого', 'пропал', 'нет бюджета', 'не подходит', 'слишком рано', 'сроки', 'отказ студии'];
+const pad = n => String(n).padStart(2, '0');
+function toLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(new Date(iso).getTime() + (3 * 60 + new Date().getTimezoneOffset()) * 60000); // в МСК
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+const ago = iso => { const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000)); return m < 60 ? `${m} мин` : m < 2880 ? `${Math.round(m / 60)} ч` : `${Math.round(m / 1440)} дн`; };
+
 function shell(inner) {
   const t = (id, label) => `<button class="chip" type="button" data-adm-tab="${id}"${tab === id ? ' aria-pressed="true"' : ''}>${label}</button>`;
   $('#view').innerHTML = `<p class="eyebrow">Пульт студии</p><h1>Управление</h1>
-    <div class="chips" role="tablist">${t('leads', 'Заявки')}${t('inv', 'Счета')}${t('post', 'Публикация')}${t('funnel', 'Воронка')}</div>
+    <div class="chips" role="tablist">${t('today', 'Сегодня')}${t('leads', 'Заявки')}${t('inv', 'Счета')}${t('content', 'Контент')}${t('post', 'Публикация')}${t('funnel', 'Воронка')}</div>
     <div id="adm">${inner}</div>`;
   setMain(null);
 }
@@ -39,10 +48,82 @@ export async function admin(sub) {
   const me = await api('admin/whoami');
   if (!me.ok) return shell(`<div class="card"><p>Пульт открывается только внутри бота студии в MAX или Telegram.</p></div>`);
   if (!me.owner) return shell(`<div class="card"><p>Доступ только у владельца.</p><p class="meta">Ваш ID на этой площадке (${esc(me.platform)}): <b>${esc(me.id)}</b>. Если это вы, внесите его в настройки сервера как OWNER_${me.platform === 'max' ? 'MAX' : 'TG'}_ID.</p></div>`);
+  if (tab === 'today') return todayScreen();
+  if (tab === 'content') return contentScreen();
   if (tab === 'leads') return leads();
   if (tab === 'post') return post();
   if (tab === 'inv') return invoices();
   return funnel();
+}
+
+/* ---------- Сегодня ---------- */
+async function todayScreen() {
+  const d = await api('admin/today');
+  if (!d.ok) return shell('<p class="note">Не удалось загрузить.</p>');
+  const who = l => esc(l.name || (l.username ? '@' + l.username : '') || l.contact || 'Без имени');
+  const block = (title, items, render, cls = '') => items.length ? `<p class="eyebrow ${cls}" style="margin-top:20px">${title} · ${items.length}</p>${items.slice(0, 7).map(render).join('')}` : '';
+  const leadCard = (l, line) => `<button class="card adm-lead" type="button" data-adm-lead="${l.id}"><b>${who(l)}</b><span class="meta">${line}</span></button>`;
+  const n = d.npd;
+  const npdLine = `<div class="card"><p class="eyebrow" style="margin:0 0 4px">Лимит НПД за год</p><p style="margin:0"><b>${new Intl.NumberFormat('ru-RU').format(n.year_sum)} ₽</b> из 2 400 000 ₽ (${n.percent}%)${n.level !== 'ok' ? ` — <b>${n.level === 'yellow' ? 'внимание: 70%+' : n.level === 'orange' ? 'близко: 85%+' : 'критично: 95%+'}</b>` : ''}</p></div>`;
+  const parts = [
+    block('Новые без ответа', d.new_unanswered, l => leadCard(l, `ждёт ${ago(l.created_at)} · ${esc(l.platform)} · ${esc((l.task || '').slice(0, 80))}`), ''),
+    block('Пора действовать', d.due, l => leadCard(l, `${esc(l.next_action || '')} · срок был ${dt(l.next_action_at)}`)),
+    block('Предложения без движения 3+ дня', d.stale_offers, l => leadCard(l, `без движения ${ago(l.updated_at)}`)),
+    block('Нет следующего действия', d.no_action, l => leadCard(l, `добавьте действие и дату · ${ST[l.status] || l.status}`)),
+    block('Неоплаченные счета 3+ дня', d.unpaid, i => `<button class="card adm-lead" type="button" data-adm-tab="inv"><b>${esc(i.title)}</b><span class="meta">${new Intl.NumberFormat('ru-RU').format(i.amount_rub)} ₽ · выставлен ${ago(i.created_at)} назад</span></button>`),
+    block('Чек «Мой налог» не пробит', d.receipts, i => `<button class="card adm-lead" type="button" data-adm-tab="inv"><b>${esc(i.title)}</b><span class="meta">${new Intl.NumberFormat('ru-RU').format(i.amount_rub)} ₽ · оплачен ${ago(i.paid_at)} назад. Чек — до 9-го числа следующего месяца</span></button>`),
+  ].join('');
+  shell(`${parts || '<div class="card"><p style="margin:0"><b>Всё чисто.</b> Срочного нет.</p></div>'}<div style="margin-top:20px">${npdLine}</div>`);
+}
+
+/* ---------- Контент: управление логикой приложения ---------- */
+const BLOCK_HELP = {
+  mode: 'Закрыть приём заявок, рабочие часы и сообщение вне часов.',
+  banner: 'Заметный баннер на главной (акция, новость) с датами показа.',
+  prices: 'Цены «от» и скрытие услуг. Пустое поле цены — как в прайсе.',
+  calc: 'Базовые цены типов проектов и разброс «от — до» в калькуляторе.',
+  sources: 'Своё приветствие для гостей из конкретной ссылки или поста.',
+  faq: 'Вопросы и ответы. Если список пуст, показываются встроенные.',
+};
+let CONTENT = null;
+
+async function contentScreen() {
+  const [cfg, sv, pr] = await Promise.all([api('admin/config'), fetch('data/services.json').then(r => r.json()).catch(() => ({ services: [] })), fetch('data/pricing.json').then(r => r.json()).catch(() => ({ types: [] }))]);
+  if (!cfg.ok) return shell('<p class="note">Не удалось загрузить.</p>');
+  CONTENT = { cfg, sv, pr };
+  const b = cfg.blocks, v = k => b[k].value, ver = k => b[k].version ? `v${b[k].version}` : 'не менялось';
+  const sec = (k, form) => `<details class="card"><summary><b>${esc(cfg.titles[k])}</b> <span class="meta">${ver(k)}</span></summary><p class="meta">${BLOCK_HELP[k]}</p>
+    <form class="form" data-cfg="${k}">${form}<button class="btn btn-accent btn-wide" type="submit">Опубликовать</button></form>
+    <button class="btn btn-wide" type="button" data-cfg-hist="${k}">История и откат</button><div id="hist-${k}"></div></details>`;
+  const m = v('mode') || {}, bn = v('banner') || {}, pri = v('prices') || {}, cal = v('calc') || {}, src = v('sources') || {}, faq = v('faq') || [];
+  const mode = `<label class="consent"><input type="checkbox" name="closed"${m.closed ? ' checked' : ''}><span>Приём заявок закрыт</span></label>
+    <div class="field"><label>Текст, когда закрыто</label><textarea name="closed_text" maxlength="300">${esc(m.closed_text || '')}</textarea></div>
+    <div class="field"><label>Рабочие часы, МСК (пусто = всегда открыто)</label><div class="chips"><input name="h_from" type="time" value="${esc((m.hours || {}).from || '')}"><input name="h_to" type="time" value="${esc((m.hours || {}).to || '')}"></div></div>
+    <div class="field"><label>Текст вне рабочих часов</label><textarea name="after_hours_text" maxlength="300">${esc(m.after_hours_text || '')}</textarea></div>`;
+  const banner = `<label class="consent"><input type="checkbox" name="enabled"${bn.enabled ? ' checked' : ''}><span>Показывать баннер</span></label>
+    <div class="field"><label>Текст</label><input name="text" maxlength="200" value="${esc(bn.text || '')}"></div>
+    <div class="field"><label>Текст кнопки</label><input name="button_text" maxlength="40" value="${esc(bn.button_text || '')}"></div>
+    <div class="field"><label>Ссылка кнопки (https://… или #/brief, #/calc)</label><input name="button_link" value="${esc(bn.button_link || '')}"></div>
+    <div class="field"><label>Показывать с / по</label><div class="chips"><input name="from" type="date" value="${esc(bn.from || '')}"><input name="to" type="date" value="${esc(bn.to || '')}"></div></div>`;
+  const prices = (sv.services || []).map(x => `<div class="field"><label>${esc(x.name)} (в прайсе ${new Intl.NumberFormat('ru-RU').format(x.priceFrom)} ₽)</label>
+    <div class="chips"><input name="p_${esc(x.id)}" type="number" min="0" inputmode="numeric" placeholder="${x.priceFrom}" value="${pri[x.id] && Number.isInteger(pri[x.id].priceFrom) ? pri[x.id].priceFrom : ''}">
+    <label class="consent" style="margin:0"><input type="checkbox" name="h_${esc(x.id)}"${pri[x.id] && pri[x.id].hidden ? ' checked' : ''}><span>скрыть</span></label></div></div>`).join('');
+  const calc = (pr.types || []).map(x => `<div class="field"><label>${esc(x.name)} (в прайсе ${new Intl.NumberFormat('ru-RU').format(x.base)} ₽)</label><input name="c_${esc(x.id)}" type="number" min="0" inputmode="numeric" placeholder="${x.base}" value="${(cal.types || {})[x.id] ? (cal.types[x.id].base) : ''}"></div>`).join('')
+    + `<div class="field"><label>Разброс «от — до» (в прайсе ${pr.spread ?? 1.5})</label><input name="spread" type="number" step="0.1" min="1" max="3" placeholder="${pr.spread ?? 1.5}" value="${cal.spread ?? ''}"></div>`;
+  const sources = `<div class="field"><label>По одной строке: код | название | приветствие</label><textarea name="lines" rows="6" placeholder="src_channel | Канал | Привет из канала!">${esc(Object.entries(src).map(([k, x]) => `${k} | ${x.title} | ${x.greeting || ''}`).join('\n'))}</textarea></div>
+    <p class="meta">Код — латиница, цифры, _ и -, без «src_». Например, строка <code>channel | Канал | Привет!</code> работает для ссылки <code>…?startapp=src_channel</code>.</p>`;
+  const faqf = `<div class="field"><label>Вопрос на первой строке, ответ ниже; вопросы разделяются строкой ---</label><textarea name="faq" rows="10">${esc(faq.map(x => `${x.q}\n${x.a}`).join('\n---\n'))}</textarea></div>`;
+  shell(`<p class="note">Изменения видны всем пользователям примерно через минуту. Любую версию можно вернуть.</p>${sec('mode', mode)}${sec('banner', banner)}${sec('prices', prices)}${sec('calc', calc)}${sec('sources', sources)}${sec('faq', faqf)}`);
+}
+
+function formValue(key, f) {
+  const g = n => f.elements[n];
+  if (key === 'mode') return { closed: g('closed').checked, closed_text: g('closed_text').value, after_hours_text: g('after_hours_text').value, hours: { from: g('h_from').value, to: g('h_to').value } };
+  if (key === 'banner') return { enabled: g('enabled').checked, text: g('text').value, button_text: g('button_text').value, button_link: g('button_link').value, from: g('from').value, to: g('to').value };
+  if (key === 'prices') { const o = {}; (CONTENT.sv.services || []).forEach(x => { const val = g('p_' + x.id).value, hid = g('h_' + x.id).checked; if (val !== '' || hid) o[x.id] = { ...(val !== '' ? { priceFrom: parseInt(val, 10) } : {}), hidden: hid }; }); return o; }
+  if (key === 'calc') { const types = {}; (CONTENT.pr.types || []).forEach(x => { const val = g('c_' + x.id).value; if (val !== '') types[x.id] = { base: parseInt(val, 10) }; }); const sp = g('spread').value; return { types, ...(sp !== '' ? { spread: parseFloat(sp) } : {}) }; }
+  if (key === 'sources') { const o = {}; g('lines').value.split('\n').map(x => x.trim()).filter(Boolean).forEach(line => { const [code, title, ...rest] = line.split('|').map(x => x.trim()); if (code) o[code] = { title: title || code, greeting: rest.join('|').trim() }; }); return o; }
+  if (key === 'faq') return g('faq').value.split(/\n---\n?/).map(x => x.trim()).filter(Boolean).map(x => { const [q, ...a] = x.split('\n'); return { q: q.trim(), a: a.join('\n').trim() }; });
 }
 
 /* ---------- Заявки ---------- */
@@ -71,8 +152,14 @@ async function leadCard(id) {
       ${kv('Бизнес', l.biz)}${kv('Услуга', l.svc)}${kv('Задача', l.task)}${kv('Бюджет', l.budget)}${kv('Срок', l.when_text)}${kv('Расчёт', l.calc)}
       <p class="meta">Согласие: ${dt(l.consent_at)}, версия ${esc(l.consent_version)}</p></div>
     <div class="field"><label for="a-st">Статус</label><select id="a-st">${Object.entries(ST).map(([k, v]) => `<option value="${k}"${k === l.status ? ' selected' : ''}>${v}</option>`).join('')}</select></div>
+    <div class="field"><label for="a-na">Следующее действие</label><input id="a-na" value="${esc(l.next_action || '')}" placeholder="Например: позвонить, отправить предложение"></div>
+    <div class="field"><label for="a-na-at">Когда (МСК)</label><input id="a-na-at" type="datetime-local" value="${esc(toLocalInput(l.next_action_at))}">
+      <div class="chips"><button class="chip" type="button" data-adm-quick="1">Завтра</button><button class="chip" type="button" data-adm-quick="3">Через 3 дня</button><button class="chip" type="button" data-adm-quick="7">Через неделю</button></div></div>
+    <div class="field"><label for="a-lost">Причина отказа (обязательна для статуса «Отказ»)</label><select id="a-lost"><option value="">—</option>${LOST.map(x => `<option${x === l.lost_reason ? ' selected' : ''}>${x}</option>`).join('')}</select></div>
+    <div class="field"><label for="a-tags">Теги через запятую</label><input id="a-tags" value="${esc((l.tags || []).join(', '))}" placeholder="горячий, бот"></div>
     <div class="field"><label for="a-note">Заметка (видите только вы)</label><textarea id="a-note">${esc(l.note || '')}</textarea></div>
-    <button class="btn btn-wide" type="button" data-adm-save="${l.id}">Сохранить статус и заметку</button>
+    ${l.first_response_at ? `<p class="meta">Первый ответ: ${dt(l.first_response_at)}</p>` : `<button class="btn btn-wide" type="button" data-adm-responded="${l.id}">Я уже ответил(а) клиенту</button>`}
+    <button class="btn btn-wide" type="button" data-adm-save="${l.id}">Сохранить</button>
     ${l.platform === 'web' ? '<p class="note">Веб-заявка: ответить можно только по контакту.</p>'
       : (l.platform === 'telegram' && !d.tg_api) ? (l.username ? `<a class="btn btn-accent btn-wide" href="https://t.me/${esc(l.username)}" target="_blank" rel="noopener">Ответить в Telegram @${esc(l.username)}</a><p class="note">Telegram недоступен серверу в РФ, ответ отправляется из вашего Telegram.</p>` : '<p class="note">У клиента нет username в Telegram: напишите ему из бота студии или попросите контакт.</p>') : `
     <div class="field"><label for="a-reply">Ответ клиенту в ${l.platform === 'max' ? 'MAX' : 'Telegram'}</label><textarea id="a-reply" placeholder="Здравствуйте! Спасибо за заявку…"></textarea></div>
@@ -138,9 +225,16 @@ async function funnel(days = 30) {
 function toastMsg(t) { const el = $('#toast'); if (!el) return; el.textContent = t; el.hidden = false; setTimeout(() => { el.hidden = true; }, 4000); }
 
 document.addEventListener('click', async e => {
-  const t = e.target.closest('[data-adm-copy],[data-adm-inv],[data-adm-invfor],[data-adm-tab],[data-adm-filter],[data-adm-lead],[data-adm-save],[data-adm-reply],[data-adm-del],[data-adm-cancel],[data-adm-days]');
+  const t = e.target.closest('[data-adm-quick],[data-adm-responded],[data-cfg-hist],[data-cfg-rb],[data-adm-copy],[data-adm-inv],[data-adm-invfor],[data-adm-tab],[data-adm-filter],[data-adm-lead],[data-adm-save],[data-adm-reply],[data-adm-del],[data-adm-cancel],[data-adm-days]');
   if (!t) return;
   const d = t.dataset; haptic();
+  if ('admQuick' in d) { const x = new Date(Date.now() + 3 * 3600e3 + (+d.admQuick) * 86400e3); const el = $('#a-na-at'); if (el) el.value = `${x.getUTCFullYear()}-${pad(x.getUTCMonth() + 1)}-${pad(x.getUTCDate())}T10:00`; return; }
+  if (d.admResponded) { const r = await api(`admin/leads/${d.admResponded}`, { method: 'PATCH', body: JSON.stringify({ responded: true }) }); toastMsg(r.ok ? 'Отмечено' : 'Не получилось'); return leadCard(d.admResponded); }
+  if (d.cfgHist) {
+    const box = $(`#hist-${d.cfgHist}`); const r = await api(`admin/config/${d.cfgHist}/versions`);
+    box.innerHTML = (r.versions || []).map(v => `<p class="meta">v${v.version} · ${dt(v.created_at)} · ${esc(v.note || '')}${v.live ? ' · <b>сейчас</b>' : ` <button class="chip" type="button" data-cfg-rb="${d.cfgHist}:${v.version}">Вернуть</button>`}</p>`).join('') || '<p class="meta">Версий пока нет.</p>'; return;
+  }
+  if (d.cfgRb) { const [k, v] = d.cfgRb.split(':'); if (!(await ask(`Вернуть версию ${v}? Текущая останется в истории.`))) return; const r = await api(`admin/config/${k}/rollback`, { method: 'POST', body: JSON.stringify({ version: +v }) }); toastMsg(r.ok ? 'Версия возвращена' : (r.error || 'Ошибка')); return contentScreen(); }
   if (d.admCopy) { try { await navigator.clipboard.writeText(d.admCopy); toastMsg('Ссылка скопирована'); } catch { toastMsg('Выделите ссылку и скопируйте'); } return; }
   if (d.admInvfor) { tab = 'inv'; return invoices(d.admInvfor); }
   if (d.admInv) { const [id, act] = d.admInv.split(':'); if (act === 'cancel' && !(await ask('Отменить счёт?'))) return; const r = await api(`admin/invoices/${id}/${act}`, { method: 'POST' }); toastMsg(r.ok ? 'Готово' : 'Не получилось'); return invoices(); }
@@ -149,8 +243,8 @@ document.addEventListener('click', async e => {
   if (d.admLead) return leadCard(d.admLead);
   if (d.admDays) return funnel(+d.admDays);
   if (d.admSave) {
-    const r = await api(`admin/leads/${d.admSave}`, { method: 'PATCH', body: JSON.stringify({ status: $('#a-st').value, note: $('#a-note').value }) });
-    toastMsg(r.ok ? 'Сохранено' : 'Не сохранилось'); if (r.ok) hapticOk(); return;
+    const r = await api(`admin/leads/${d.admSave}`, { method: 'PATCH', body: JSON.stringify({ status: $('#a-st').value, note: $('#a-note').value, next_action: $('#a-na').value, next_action_at: $('#a-na-at').value || null, lost_reason: $('#a-lost').value || undefined, tags: $('#a-tags').value.split(',').map(x => x.trim()).filter(Boolean) }) });
+    toastMsg(r.ok ? 'Сохранено' : (r.error || 'Не сохранилось')); if (r.ok) hapticOk(); return;
   }
   if (d.admReply) {
     const text = $('#a-reply').value.trim(); if (!text) return toastMsg('Напишите ответ');
@@ -168,6 +262,15 @@ document.addEventListener('click', async e => {
 });
 
 document.addEventListener('submit', async e => {
+  const cf = e.target.closest('[data-cfg]');
+  if (cf) {
+    e.preventDefault();
+    const key = cf.dataset.cfg;
+    let value; try { value = formValue(key, cf); } catch { return toastMsg('Проверьте поля'); }
+    const r = await api(`admin/config/${key}`, { method: 'POST', body: JSON.stringify({ value, note: 'из пульта' }) });
+    toastMsg(r.ok ? `Опубликовано (v${r.version})` : (r.error || 'Ошибка')); if (r.ok) hapticOk();
+    return;
+  }
   const fi = e.target.closest('[data-adm-inv-new]');
   if (fi) {
     e.preventDefault();

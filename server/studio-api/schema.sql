@@ -79,3 +79,26 @@ CREATE TABLE IF NOT EXISTS invoices (
   paid_at             timestamptz
 );
 CREATE INDEX IF NOT EXISTS invoices_status_idx ON invoices (status, created_at DESC);
+
+-- P0 пульта-CRM: управляемый контент с версиями и откатом
+CREATE TABLE IF NOT EXISTS content_versions (
+  id         bigserial PRIMARY KEY,
+  key        text NOT NULL,
+  version    integer NOT NULL,
+  value      jsonb NOT NULL,
+  author     text,
+  note       text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (key, version)
+);
+CREATE TABLE IF NOT EXISTS content_pointers (
+  key        text PRIMARY KEY,
+  version_id bigint NOT NULL REFERENCES content_versions(id),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+-- Поля заявки: следующее действие, причина потери, время первого ответа, теги
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_action text;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_action_at timestamptz;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_reason text;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_response_at timestamptz;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}';

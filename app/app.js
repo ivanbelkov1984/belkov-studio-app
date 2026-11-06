@@ -38,6 +38,52 @@ let D = {}, S = {}, PR = {}, L = {};
 const state = { dir: 'all', plat: 'all', calc: { step: 0, type: null, plat: null, feats: [], urg: null }, brief: {} };
 let src = '';
 const srv = { leads: false, owner: false };
+let CFG = { blocks: {}, state: 'open' };   // управляемый из пульта конфиг (запасной вариант — вшитые данные)
+
+/* Применяет опубликованные в пульте блоки поверх вшитых данных. Вшитые данные остаются запасным вариантом. */
+function applyConfig(blocks = {}) {
+  const pr = blocks.prices || {};
+  S.services = S.services.filter(x => !(pr[x.id] && pr[x.id].hidden));
+  S.services.forEach(x => { if (pr[x.id] && Number.isInteger(pr[x.id].priceFrom)) x.priceFrom = pr[x.id].priceFrom; });
+  const calcCfg = blocks.calc || {};
+  (PR.types || []).forEach(t => { const o = (calcCfg.types || {})[t.id]; if (o && Number.isInteger(o.base)) t.base = o.base; });
+  if (typeof calcCfg.spread === 'number') PR.spread = calcCfg.spread;
+  if (Array.isArray(blocks.faq) && blocks.faq.length) D.faq = blocks.faq;
+}
+async function loadConfig() {
+  let cfg = null;
+  try {
+    const r = await fetch('/api/config', { cache: 'no-cache' });
+    if (r.ok) { cfg = await r.json(); try { localStorage.setItem('cfg', JSON.stringify(cfg)); } catch {} }
+  } catch {}
+  if (!cfg) { try { cfg = JSON.parse(localStorage.getItem('cfg') || 'null'); } catch {} }
+  if (cfg && cfg.blocks) CFG = cfg;
+}
+const today = () => new Date().toISOString().slice(0, 10);
+function activeBanner() {
+  const b = CFG.blocks.banner;
+  if (!b || !b.enabled || !b.text) return null;
+  const t = today();
+  if ((b.from && t < b.from) || (b.to && t > b.to)) return null;
+  return b;
+}
+function bannerHtml() {
+  const b = activeBanner(); if (!b) return '';
+  const link = b.button_link || '';
+  const btn = b.button_text && link ? (link.startsWith('#/') ? `<a class="btn" href="${esc(link)}">${esc(b.button_text)}</a>` : `<button class="btn" type="button" data-link="${esc(link)}">${esc(b.button_text)}</button>`) : '';
+  return `<div class="card promo"><p style="margin:0 0 ${btn ? 10 : 0}px"><b>${esc(b.text)}</b></p>${btn}</div>`;
+}
+function greetingHtml() {
+  const all = CFG.blocks.sources || {};
+  const g = all[src] || all['src_' + src];
+  return g && g.greeting ? `<div class="card"><p style="margin:0">${esc(g.greeting)}</p></div>` : '';
+}
+function modeHtml() {
+  const m = CFG.blocks.mode || {};
+  if (CFG.state === 'closed') return `<div class="card"><p style="margin:0"><b>${esc(m.closed_text || 'Приём заявок временно закрыт.')}</b></p></div>`;
+  if (CFG.state === 'after_hours' && m.after_hours_text) return `<div class="card"><p style="margin:0">${esc(m.after_hours_text)}</p></div>`;
+  return '';
+}
 /* Обезличенная воронка: только тип события, метка источника и площадка */
 function track(type) { try { fetch('/api/event', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, src, plat: P.kind }) }).catch(() => {}); } catch {} }
 
@@ -76,6 +122,7 @@ function home() {
       <p>Запускаем продажи в Telegram и MAX: бот, каталог, ИИ-ассистент и продвижение в одних руках.</p>
       <div class="tags"><span class="tag">Telegram</span><span class="tag">MAX</span><span class="tag">Веб</span></div>
     </section>
+    ${bannerHtml()}${greetingHtml()}${modeHtml()}
     <h2 class="sec">Что создаём <small>01 / 03</small></h2>
     <div class="grid three">${dirs.map(([d, i, t]) => `<a class="tile" href="#/services" data-dir="${d}">${ic(i)}<b>${t}</b></a>`).join('')}</div>
     <p class="eyebrow" style="margin-top:28px">Почему мы</p>
@@ -236,7 +283,7 @@ function zoom(i) {
 function brief() {
   const b = state.brief;
   track('brief');
-  view.innerHTML = `<p class="eyebrow">Заявка</p><h1>Расскажите о проекте</h1><p class="lead">Мы подготовим сообщение — отправка в чат будет под вашим контролем.</p>
+  view.innerHTML = `${modeHtml()}<p class="eyebrow">Заявка</p><h1>Расскажите о проекте</h1><p class="lead">Мы подготовим сообщение — отправка в чат будет под вашим контролем.</p>
     <form class="form" data-brief novalidate>
       <div class="field"><label for="b-biz">Ваш бизнес</label><input id="b-biz" name="biz" placeholder="Например, кофейня" value="${esc(b.biz || '')}"></div>
       <div class="field"><label for="b-svc">Что нужно</label><select id="b-svc" name="svc"><option value="">Пока не знаю — нужна консультация</option>${S.services.map(s => `<option value="${s.id}"${s.id === b.svc ? ' selected' : ''}>${esc(s.name)} (${priceTxt(s.priceFrom, s.monthly)})</option>`).join('')}</select></div>
@@ -257,6 +304,7 @@ function brief() {
 let lastText = '';
 async function sendBrief() {
   const form = $('[data-brief]'); if (!form) return;
+  if (CFG.state === 'closed') { toast((CFG.blocks.mode || {}).closed_text || 'Приём заявок временно закрыт.'); haptic('heavy'); return; }
   const f = Object.fromEntries(new FormData(form)); Object.assign(state.brief, f); save('brief', state.brief);
   const task = form.querySelector('#b-task'), err = form.querySelector('#b-err');
   if (!String(f.task || '').trim()) { task.setAttribute('aria-invalid', 'true'); err.hidden = false; task.focus(); haptic('heavy'); return; }
@@ -298,7 +346,7 @@ function ready(stored = false) {
       <div class="actions"><a class="btn btn-wide" href="#/cases">Посмотреть кейсы ${ic('arrow')}</a></div>`;
     return setMain('На главную', () => go('#/'));
   }
-  view.innerHTML = `<div class="done">${ic('check')}</div><h1>Заявка готова</h1><p class="lead">Мы собрали текст. Осталось подтвердить отправку в чате студии.</p>
+  view.innerHTML = `<div class="done">${ic('check')}</div><h1>Заявка готова</h1><p class="lead">Мы собрали текст. Осталось подтвердить отправку в чате студии.</p>${modeHtml()}
     <div class="card"><p class="eyebrow" style="margin:0 0 6px">Следующие шаги</p><ol class="steps">
       <li><span class="n">01</span><div><b>Откройте чат</b><span>Проверьте текст и отправьте сообщение</span></div></li>
       <li><span class="n">02</span><div><b>Ответ в рабочее время</b><span>Обычно отвечаем в течение рабочего дня</span></div></li>
@@ -372,6 +420,8 @@ window.addEventListener('hashchange', route);
   bindBack(); bindMain();
   readStart();
   try { srv.leads = !!(await (await fetch('/api/status')).json()).leads; } catch {}
+  await loadConfig();
+  applyConfig(CFG.blocks);
   route();
   track('open');
   isOwner().then(ok => { if (ok) { srv.owner = true; addPultTab(); const [a] = (location.hash || '#/').slice(2).split('/'); if (a !== 'admin') route(); } });

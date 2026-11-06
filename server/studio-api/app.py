@@ -347,14 +347,43 @@ async def lead_patch(request):
     lid = int(request.match_info["id"])
     b = await request.json()
     pool = request.app["pool"]
+    cur = await pool.fetchrow("SELECT status, lost_reason FROM leads WHERE id=$1", lid)
+    if not cur:
+        return web.json_response({"ok": False}, status=404)
     st = b.get("status")
     if st is not None and st not in STATUSES:
         return web.json_response({"ok": False, "error": "bad status"}, status=400)
-    r = await pool.fetchrow(
-        "UPDATE leads SET status=COALESCE($2,status), note=COALESCE($3,note), updated_at=now() WHERE id=$1 RETURNING id",
-        lid, st, clean(b["note"], 2000) if "note" in b else None)
-    if not r:
-        return web.json_response({"ok": False}, status=404)
+    lost_reason = clean(b.get("lost_reason"), 200) if "lost_reason" in b else None
+    if st == "lost" and not (lost_reason or cur["lost_reason"]):
+        return web.json_response({"ok": False, "error": "Укажите причину отказа"}, status=400)
+    na_at = None
+    if "next_action_at" in b:
+        if b["next_action_at"]:
+            try:
+                na_at = datetime.fromisoformat(str(b["next_action_at"]))
+                if na_at.tzinfo is None:
+                    na_at = na_at.replace(tzinfo=MSK)
+            except ValueError:
+                return web.json_response({"ok": False, "error": "неверная дата"}, status=400)
+    tags = None
+    if "tags" in b:
+        raw = b.get("tags") or []
+        tags = []
+        for t in raw if isinstance(raw, list) else []:
+            t = re.sub(r"[^\w-]", "", str(t).lower(), flags=re.UNICODE)[:24]
+            if t and t not in tags:
+                tags.append(t)
+        tags = tags[:10]
+    await pool.execute(
+        "UPDATE leads SET status=COALESCE($2,status), note=COALESCE($3,note), "
+        "next_action = CASE WHEN $4::boolean THEN $5 ELSE next_action END, "
+        "next_action_at = CASE WHEN $4::boolean THEN $6 ELSE next_action_at END, "
+        "lost_reason = COALESCE($7, lost_reason), tags = COALESCE($8, tags), "
+        "first_response_at = CASE WHEN $9::boolean THEN COALESCE(first_response_at, now()) ELSE first_response_at END, "
+        "updated_at=now() WHERE id=$1",
+        lid, st, clean(b["note"], 2000) if "note" in b else None,
+        "next_action_at" in b or "next_action" in b, clean(b.get("next_action"), 200) or None, na_at,
+        lost_reason, tags, bool(b.get("responded")))
     if st:
         await audit(pool, "status", lid, st)
     return web.json_response({"ok": True})
@@ -372,7 +401,10 @@ async def lead_reply(request):
     res = await request.app["msg"].to_user(r["platform"], r["user_id"] or "", text)
     await pool.execute("INSERT INTO lead_messages(lead_id,direction,text,ok,error) VALUES($1,'out',$2,$3,$4)",
                        lid, text, bool(res.get("ok")), (res.get("error") or None) and str(res.get("error"))[:300])
-    await pool.execute("UPDATE leads SET status=CASE WHEN status='new' THEN 'work' ELSE status END, updated_at=now() WHERE id=$1", lid)
+    await pool.execute(
+        "UPDATE leads SET status=CASE WHEN status='new' THEN 'work' ELSE status END, "
+        "first_response_at = CASE WHEN $2::boolean THEN COALESCE(first_response_at, now()) ELSE first_response_at END, "
+        "updated_at=now() WHERE id=$1", lid, bool(res.get("ok")))
     await audit(pool, "reply", lid, "ok" if res.get("ok") else "error")
     return web.json_response({"ok": bool(res.get("ok")), "error": res.get("error")})
 
@@ -440,6 +472,241 @@ async def post_cancel(request):
     pid = int(request.match_info["id"])
     r = await request.app["pool"].execute("UPDATE posts SET status='canceled' WHERE id=$1 AND status='scheduled'", pid)
     return web.json_response({"ok": r.endswith("1")})
+
+
+# ---------- Управляемый контент (конфиг приложения) ----------
+MSK = timezone(timedelta(hours=3))
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+LINK_OK = ("https://", "tg://", "max://", "#/")
+
+
+class BadBlock(Exception):
+    pass
+
+
+def need(cond, msg):
+    if not cond:
+        raise BadBlock(msg)
+
+
+def s_str(v, n, name, allow_empty=True):
+    need(isinstance(v, str), f"{name}: нужна строка")
+    v = clean(v, n + 1)
+    need(len(v) <= n, f"{name}: не длиннее {n} знаков")
+    need(allow_empty or v, f"{name}: не может быть пустым")
+    return v
+
+
+def v_mode(v):
+    need(isinstance(v, dict), "режим: нужен объект")
+    hours = v.get("hours") or {}
+    need(isinstance(hours, dict), "часы: нужен объект")
+    out = {"closed": bool(v.get("closed")),
+           "closed_text": s_str(v.get("closed_text", ""), 300, "текст «приём закрыт»"),
+           "after_hours_text": s_str(v.get("after_hours_text", ""), 300, "текст вне часов"),
+           "hours": {"from": str(hours.get("from", "")), "to": str(hours.get("to", ""))}}
+    for k in ("from", "to"):
+        need(out["hours"][k] == "" or TIME_RE.match(out["hours"][k]), "часы: формат ЧЧ:ММ")
+    need((out["hours"]["from"] == "") == (out["hours"]["to"] == ""), "часы: заполните оба поля или оставьте пустыми")
+    return out
+
+
+def v_banner(v):
+    need(isinstance(v, dict), "баннер: нужен объект")
+    out = {"enabled": bool(v.get("enabled")), "text": s_str(v.get("text", ""), 200, "текст баннера"),
+           "button_text": s_str(v.get("button_text", ""), 40, "текст кнопки"),
+           "button_link": s_str(v.get("button_link", ""), 300, "ссылка кнопки"),
+           "from": str(v.get("from", "") or ""), "to": str(v.get("to", "") or "")}
+    need(out["button_link"] == "" or out["button_link"].startswith(LINK_OK), "ссылка: только https://, tg://, max:// или #/")
+    for k in ("from", "to"):
+        need(out[k] == "" or DATE_RE.match(out[k]), "даты: формат ГГГГ-ММ-ДД")
+    need(not out["enabled"] or out["text"], "включённый баннер должен иметь текст")
+    return out
+
+
+def v_prices(v):
+    need(isinstance(v, dict) and len(v) <= 40, "цены: нужен объект")
+    out = {}
+    for k, x in v.items():
+        k = slug(k)
+        need(k and isinstance(x, dict), "цены: неверный ключ")
+        pf = x.get("priceFrom")
+        need(pf is None or (isinstance(pf, int) and not isinstance(pf, bool) and 0 <= pf <= 5_000_000), f"цена «{k}»: целое от 0 до 5 000 000")
+        item = {"hidden": bool(x.get("hidden"))}
+        if pf is not None:
+            item["priceFrom"] = pf
+        out[k] = item
+    return out
+
+
+def v_calc(v):
+    need(isinstance(v, dict), "калькулятор: нужен объект")
+    types = v.get("types") or {}
+    need(isinstance(types, dict) and len(types) <= 20, "калькулятор: types")
+    out = {"types": {}}
+    for k, x in types.items():
+        k = slug(k)
+        b = (x or {}).get("base")
+        need(k and isinstance(b, int) and not isinstance(b, bool) and 0 <= b <= 5_000_000, f"база «{k}»: целое от 0 до 5 000 000")
+        out["types"][k] = {"base": b}
+    if v.get("spread") is not None:
+        sp = v["spread"]
+        need(isinstance(sp, (int, float)) and not isinstance(sp, bool) and 1 <= sp <= 3, "разброс: число от 1 до 3")
+        out["spread"] = float(sp)
+    return out
+
+
+def v_sources(v):
+    need(isinstance(v, dict) and len(v) <= 100, "источники: нужен объект")
+    out = {}
+    for k, x in v.items():
+        k = slug(k)
+        need(k and isinstance(x, dict), "источники: неверный код")
+        out[k] = {"title": s_str(x.get("title", ""), 80, f"название «{k}»", allow_empty=False),
+                  "greeting": s_str(x.get("greeting", ""), 300, f"приветствие «{k}»")}
+    return out
+
+
+def v_faq(v):
+    need(isinstance(v, list) and len(v) <= 30, "FAQ: список до 30 вопросов")
+    return [{"q": s_str((x or {}).get("q", ""), 200, "вопрос", allow_empty=False),
+             "a": s_str((x or {}).get("a", ""), 1500, "ответ", allow_empty=False)} for x in v]
+
+
+VALIDATORS = {"mode": v_mode, "banner": v_banner, "prices": v_prices, "calc": v_calc, "sources": v_sources, "faq": v_faq}
+BLOCK_TITLES = {"mode": "Режим работы", "banner": "Баннер", "prices": "Цены услуг", "calc": "Калькулятор",
+                "sources": "Источники", "faq": "FAQ"}
+
+
+async def published_blocks(pool) -> dict:
+    rows = await pool.fetch(
+        "SELECT p.key, v.value, v.version, p.updated_at FROM content_pointers p JOIN content_versions v ON v.id = p.version_id")
+    return {r["key"]: {"value": json.loads(r["value"]) if isinstance(r["value"], str) else r["value"],
+                       "version": r["version"], "updated_at": r["updated_at"]} for r in rows}
+
+
+def work_state(mode: dict | None) -> str:
+    """open | closed | after_hours — по московскому времени."""
+    mode = mode or {}
+    if mode.get("closed"):
+        return "closed"
+    h = mode.get("hours") or {}
+    if h.get("from") and h.get("to"):
+        now = datetime.now(MSK).strftime("%H:%M")
+        a, b = h["from"], h["to"]
+        inside = (a <= now < b) if a <= b else (now >= a or now < b)
+        return "open" if inside else "after_hours"
+    return "open"
+
+
+async def config_get(request):
+    """Публичный конфиг приложения: только опубликованные блоки (без служебных данных)."""
+    blocks = await published_blocks(request.app["pool"])
+    values = {k: b["value"] for k, b in blocks.items()}
+    rev = max([b["updated_at"] for b in blocks.values()], default=None)
+    body = {"rev": rev.isoformat() if rev else "0", "blocks": values, "state": work_state(values.get("mode"))}
+    etag = '"' + hashlib.sha256((json.dumps(values, sort_keys=True, ensure_ascii=False) + body["state"]).encode()).hexdigest()[:20] + '"'
+    if request.headers.get("If-None-Match") == etag:
+        return web.Response(status=304, headers={"ETag": etag, "Cache-Control": "public, max-age=30, stale-while-revalidate=300"})
+    return web.json_response(body, headers={"ETag": etag, "Cache-Control": "public, max-age=30, stale-while-revalidate=300"})
+
+
+async def admin_config_list(request):
+    pool = request.app["pool"]
+    blocks = await published_blocks(pool)
+    return web.json_response({"ok": True, "titles": BLOCK_TITLES, "blocks": {
+        k: {"value": blocks[k]["value"] if k in blocks else None, "version": blocks[k]["version"] if k in blocks else 0,
+            "updated_at": blocks[k]["updated_at"].isoformat() if k in blocks else None} for k in VALIDATORS}})
+
+
+async def publish_block(pool, key: str, value, author: str, note: str) -> int:
+    async with pool.acquire() as c:
+        async with c.transaction():
+            await c.execute("SELECT pg_advisory_xact_lock(hashtext($1))", "content:" + key)
+            ver = (await c.fetchval("SELECT COALESCE(max(version),0) + 1 FROM content_versions WHERE key=$1", key))
+            vid = await c.fetchval(
+                "INSERT INTO content_versions(key, version, value, author, note) VALUES($1,$2,$3::jsonb,$4,$5) RETURNING id",
+                key, ver, json.dumps(value, ensure_ascii=False), author, note[:200])
+            await c.execute(
+                "INSERT INTO content_pointers(key, version_id) VALUES($1,$2) "
+                "ON CONFLICT (key) DO UPDATE SET version_id=EXCLUDED.version_id, updated_at=now()", key, vid)
+    return ver
+
+
+async def config_save(request):
+    key = request.match_info["key"]
+    if key not in VALIDATORS:
+        return web.json_response({"ok": False, "error": "неизвестный блок"}, status=404)
+    b = await request.json()
+    try:
+        value = VALIDATORS[key](b.get("value"))
+    except BadBlock as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    plat, user = request["owner"]
+    ver = await publish_block(request.app["pool"], key, value, f"{plat}:{user['id']}", clean(b.get("note"), 200) or "правка")
+    await audit(request.app["pool"], "content_published", None, f"{key} v{ver}")
+    return web.json_response({"ok": True, "version": ver})
+
+
+async def config_versions(request):
+    key = request.match_info["key"]
+    if key not in VALIDATORS:
+        return web.json_response({"ok": False}, status=404)
+    rows = await request.app["pool"].fetch(
+        "SELECT v.version, v.note, v.author, v.created_at, (p.version_id = v.id) AS live FROM content_versions v "
+        "LEFT JOIN content_pointers p ON p.key = v.key WHERE v.key=$1 ORDER BY v.version DESC LIMIT 30", key)
+    return web.json_response({"ok": True, "versions": [row(r) for r in rows]})
+
+
+async def config_rollback(request):
+    key = request.match_info["key"]
+    if key not in VALIDATORS:
+        return web.json_response({"ok": False}, status=404)
+    b = await request.json()
+    try:
+        target = int(b.get("version"))
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "version"}, status=400)
+    old = await request.app["pool"].fetchval("SELECT value FROM content_versions WHERE key=$1 AND version=$2", key, target)
+    if old is None:
+        return web.json_response({"ok": False, "error": "версии нет"}, status=404)
+    value = json.loads(old) if isinstance(old, str) else old
+    plat, user = request["owner"]
+    ver = await publish_block(request.app["pool"], key, value, f"{plat}:{user['id']}", f"откат к v{target}")
+    await audit(request.app["pool"], "content_rollback", None, f"{key} v{target} -> v{ver}")
+    return web.json_response({"ok": True, "version": ver})
+
+
+# ---------- Экран «Сегодня» ----------
+NPD_LIMIT = 2_400_000
+
+
+async def today(request):
+    pool = request.app["pool"]
+    q = lambda sql, *a: pool.fetch(sql, *a)
+    new_unanswered = await q("SELECT id, name, username, contact, platform, task, created_at FROM leads "
+                             "WHERE status='new' AND first_response_at IS NULL ORDER BY created_at LIMIT 20")
+    due = await q("SELECT id, name, username, contact, next_action, next_action_at, status FROM leads "
+                  "WHERE next_action_at IS NOT NULL AND next_action_at <= now() AND status NOT IN ('done','lost') "
+                  "ORDER BY next_action_at LIMIT 20")
+    no_action = await q("SELECT id, name, username, contact, status, updated_at FROM leads "
+                        "WHERE status IN ('new','work','offer') AND next_action_at IS NULL AND first_response_at IS NOT NULL "
+                        "ORDER BY updated_at LIMIT 20")
+    stale_offers = await q("SELECT id, name, username, contact, updated_at FROM leads "
+                           "WHERE status='offer' AND updated_at < now() - interval '3 days' ORDER BY updated_at LIMIT 20")
+    unpaid = await q("SELECT id, title, amount_rub, created_at FROM invoices "
+                     "WHERE status='awaiting_payment' AND created_at < now() - interval '3 days' ORDER BY created_at LIMIT 20")
+    receipts = await q("SELECT id, title, amount_rub, paid_at FROM invoices WHERE status='paid' AND NOT receipt_done ORDER BY paid_at LIMIT 20")
+    year_sum = await pool.fetchval(
+        "SELECT COALESCE(sum(amount_rub),0) FROM invoices WHERE status='paid' AND paid_at >= date_trunc('year', now())")
+    pct = round(year_sum * 100 / NPD_LIMIT, 1)
+    return web.json_response({"ok": True, "now": datetime.now(MSK).isoformat(),
+        "new_unanswered": [row(r) for r in new_unanswered], "due": [row(r) for r in due],
+        "no_action": [row(r) for r in no_action], "stale_offers": [row(r) for r in stale_offers],
+        "unpaid": [row(r) for r in unpaid], "receipts": [row(r) for r in receipts],
+        "npd": {"year_sum": year_sum, "limit": NPD_LIMIT, "percent": pct,
+                "level": "red" if pct >= 95 else "orange" if pct >= 85 else "yellow" if pct >= 70 else "ok"}})
 
 
 # ---------- Счета и оплата ЮKassa ----------
@@ -681,6 +948,7 @@ def make_app() -> web.Application:
     r = app.router
     r.add_get("/api/health", health)
     r.add_get("/api/status", status)
+    r.add_get("/api/config", config_get)
     r.add_post("/api/event", event)
     r.add_post("/api/lead", lead)
     r.add_get("/api/admin/whoami", whoami)
@@ -693,6 +961,11 @@ def make_app() -> web.Application:
     r.add_get("/api/admin/posts", posts_list)
     r.add_post("/api/admin/posts", post_create)
     r.add_post("/api/admin/posts/{id:\\d+}/cancel", post_cancel)
+    r.add_get("/api/admin/today", today)
+    r.add_get("/api/admin/config", admin_config_list)
+    r.add_post("/api/admin/config/{key:[a-z_]+}", config_save)
+    r.add_get("/api/admin/config/{key:[a-z_]+}/versions", config_versions)
+    r.add_post("/api/admin/config/{key:[a-z_]+}/rollback", config_rollback)
     r.add_get("/api/admin/invoices", invoices_list)
     r.add_post("/api/admin/invoices", invoice_create)
     r.add_post("/api/admin/invoices/{id:\\d+}/{action:receipt|cancel|check}", invoice_action)
