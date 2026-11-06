@@ -183,3 +183,11 @@ img { max-width: 100%; }
 .zoom p { color: #fff; text-align: center; font-size: 14px; }
 .consent { display: flex; gap: 12px; align-items: flex-start; font-size: 14px; color: var(--muted); }
 .consent input { width: 22px; height: 22px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+
+/* Пульт владельца */
+.adm-lead { display: grid; gap: 4px; text-align: left; width: 100%; font: inherit; color: inherit; cursor: pointer; }
+.adm-lead .tag { justify-self: start; }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.adm-table { overflow-x: auto; }
+.adm-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.adm-table th, .adm-table td { padding: 6px 8px; border-bottom: 1px solid var(--stroke); text-align: left; white-space: nowrap; }

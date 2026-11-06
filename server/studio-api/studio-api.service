@@ -1,0 +1,23 @@
+[Unit]
+Description=Studio API (pult: leads, publishing, funnel)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=studio
+Group=studio
+WorkingDirectory=/srv/studio/api
+EnvironmentFile=/srv/studio/secrets/.env
+EnvironmentFile=/srv/studio/secrets/db.env
+ExecStart=/usr/bin/python3 /srv/studio/api/app.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/srv/studio
+ReadWritePaths=/srv/studio/logs
+
+[Install]
+WantedBy=multi-user.target

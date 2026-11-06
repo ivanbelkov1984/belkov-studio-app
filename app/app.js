@@ -1,5 +1,6 @@
 import { CONFIG as C } from './config.js';
 import { P, initPlatform, haptic, hapticOk, openLink, setBack, bindBack, setMain, bindMain, save, load, share } from './platform.js';
+import { admin, isOwner } from './admin.js';
 
 const $ = s => document.querySelector(s);
 const view = $('#view');
@@ -35,6 +36,9 @@ const tags = list => `<div class="tags">${list.map(p => `<span class="tag">${esc
 let D = {}, S = {}, PR = {}, L = {};
 const state = { dir: 'all', plat: 'all', calc: { step: 0, type: null, plat: null, feats: [], urg: null }, brief: {} };
 let src = '';
+const srv = { leads: false, owner: false };
+/* Обезличенная воронка: только тип события, метка источника и площадка */
+function track(type) { try { fetch('/api/event', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, src, plat: P.kind }) }).catch(() => {}); } catch {} }
 
 /* ---------- Источник и глубокие ссылки ---------- */
 function readStart() {
@@ -46,6 +50,7 @@ function readStart() {
     else if (part.startsWith('case_')) location.hash = `#/cases/${part.slice(5)}`;
     else if (part === 'calc') location.hash = '#/calc';
     else if (part === 'brief') location.hash = '#/brief';
+    else if (part === 'admin') location.hash = '#/admin';
   }
   if (!src && q.get('src')) src = q.get('src').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
 }
@@ -53,7 +58,7 @@ function readStart() {
 const svcById = id => S.services.find(s => s.id === id);
 const caseById = id => D.cases.find(c => c.id === id);
 const backBtn = (label = 'Назад') => P.kind === 'web' ? `<button class="back" type="button" data-back>${ic('back')}${esc(label)}</button>` : '';
-const footer = () => `<p class="note" style="margin-top:28px">${esc(L.operator || '')}. <a href="#/docs">Документы</a> · <a href="#/terms">Условия работы</a> · <a href="#/privacy">Политика обработки данных</a>. Цены не являются публичной офертой.</p>`;
+const footer = () => `<p class="note" style="margin-top:28px">${esc(L.operator || '')}. <a href="#/docs">Документы</a> · <a href="#/terms">Условия работы</a> · <a href="#/privacy">Политика обработки данных</a>. Цены не являются публичной офертой.${srv.owner ? ' · <a href="#/admin">Пульт</a>' : ''}</p>`;
 const priceTxt = (n, monthly) => `от ${rub(n)}${monthly ? '/мес' : ''}`;
 
 /* ---------- Экраны ---------- */
@@ -179,6 +184,7 @@ function calc() {
       <div class="actions"><button class="btn btn-wide" type="button" data-calc-restart>Посчитать заново</button></div>`;
   }
   view.innerHTML = `${backBtn('Калькулятор')}<p class="step-label">Шаг ${Math.min(k.step + 1, 4)} из 4</p>${bar}${body}`;
+  if (k.step >= 4 && !k.tracked) { k.tracked = true; track('calc'); }
   if (k.step >= 4) setMain('Отправить расчёт', () => { state.brief.calc = calcText(); go('#/brief'); });
   else if (k.step === 2) setMain('Дальше', () => { k.step = 3; calc(); });
   else setMain(null);
@@ -226,6 +232,7 @@ function zoom(i) {
 /* ---------- Заявка ---------- */
 function brief() {
   const b = state.brief;
+  track('brief');
   view.innerHTML = `<p class="eyebrow">Заявка</p><h1>Расскажите о проекте</h1><p class="lead">Мы подготовим сообщение — отправка в чат будет под вашим контролем.</p>
     <form class="form" data-brief novalidate>
       <div class="field"><label for="b-biz">Ваш бизнес</label><input id="b-biz" name="biz" placeholder="Например, кофейня" value="${esc(b.biz || '')}"></div>
@@ -233,13 +240,14 @@ function brief() {
       <div class="field"><label for="b-task">Задача *</label>
         <textarea id="b-task" name="task" required aria-describedby="b-err" placeholder="Что должно измениться для клиентов?">${esc(b.task || '')}</textarea>
         <span class="err" id="b-err" role="alert" hidden>Опишите задачу, чтобы мы поняли запрос.</span></div>
+      ${srv.leads && P.kind === 'web' ? `<div class="field"><label for="b-contact">Как с вами связаться *</label><input id="b-contact" name="contact" placeholder="Телефон, e-mail или @username" value="${esc(b.contact || '')}"></div>` : ''}
       <div class="field"><label for="b-budget">Бюджет</label><select id="b-budget" name="budget">${['Выбрать диапазон', 'до 50 000 ₽', '50–100 тыс. ₽', '100–200 тыс. ₽', 'более 200 тыс. ₽'].map(o => `<option${o === b.budget ? ' selected' : ''}>${o}</option>`).join('')}</select></div>
       <div class="field"><label for="b-when">Когда нужно</label><select id="b-when" name="when">${['Пока без точной даты', 'В этом месяце', 'Срочно'].map(o => `<option${o === b.when ? ' selected' : ''}>${o}</option>`).join('')}</select></div>
       ${b.calc ? `<div class="card"><p class="eyebrow" style="margin:0 0 4px">Расчёт из калькулятора</p><p class="meta">${esc(b.calc)}</p></div>` : ''}
       <label class="consent"><input type="checkbox" id="b-ok" name="ok" aria-describedby="b-ok-err"${b.ok ? ' checked' : ''}><span>Даю <a href="#/consent">согласие на обработку персональных данных</a> для ответа на заявку; с <a href="#/privacy">Политикой</a> ознакомлен(а)</span></label>
       <span class="err" id="b-ok-err" role="alert" hidden>Нужно согласие, чтобы мы могли ответить.</span>
     </form>
-    <p class="note">Приложение не хранит данные на сервере: текст заявки вы отправляете сами в чат студии.</p>
+    <p class="note">${srv.leads ? 'Заявка сохранится на сервере студии в России и придёт нам сразу.' : 'Приложение не хранит данные на сервере: текст заявки вы отправляете сами в чат студии.'}</p>
     ${C.phone ? `<p class="note">Или позвоните: <a href="tel:${esc(C.phone.replace(/[^+\d]/g, ''))}">${esc(C.phone)}</a></p>` : ''}`;
   setMain('Отправить заявку', sendBrief);
 }
@@ -263,6 +271,17 @@ async function sendBrief() {
   if (src) lines.push(`Источник: ${src}`);
   lines.push(`Площадка: ${P.kind}`);
   lastText = lines.join('\n');
+  if (srv.leads) {
+    if (P.kind === 'web' && !String(f.contact || '').trim()) { toast('Укажите, как с вами связаться'); form.querySelector('#b-contact')?.focus(); return; }
+    try {
+      const r = await fetch('/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Platform': P.kind, 'X-Init-Data': P.sdk?.initData || '' },
+        body: JSON.stringify({ biz: f.biz, svc: f.svc, task: f.task, budget: /^Выбрать/.test(f.budget) ? '' : f.budget, when: f.when, calc: state.brief.calc || '', contact: f.contact || '', src, consent: true }) });
+      const j = await r.json().catch(() => ({}));
+      if (j.stored) { track('lead'); hapticOk(); return ready(true); }
+      if (r.status !== 202) toast(j.error || 'Не удалось отправить, отправьте текст в чат.');
+    } catch { toast('Нет связи с сервером, отправьте текст в чат.'); }
+  }
+  track('lead');
   hapticOk();
   ready();
 }
@@ -270,7 +289,12 @@ function openChat() {
   if (P.kind === 'max') { copy(lastText).then(ok => toast(ok ? 'Текст скопирован — вставьте его в чат студии.' : 'Опишите задачу в чате студии.')); openLink(C.maxContactUrl); }
   else openLink(`https://t.me/${C.telegramUsername}?text=${encodeURIComponent(lastText)}`);
 }
-function ready() {
+function ready(stored = false) {
+  if (stored) {
+    view.innerHTML = `<div class="done">${ic('check')}</div><h1>Заявка отправлена</h1><p class="lead">Мы получили заявку и ответим ${P.kind === 'web' ? 'по указанному контакту' : 'в этом мессенджере'}, обычно в течение рабочего дня.</p>
+      <div class="actions"><a class="btn btn-wide" href="#/cases">Посмотреть кейсы ${ic('arrow')}</a></div>`;
+    return setMain('На главную', () => go('#/'));
+  }
   view.innerHTML = `<div class="done">${ic('check')}</div><h1>Заявка готова</h1><p class="lead">Мы собрали текст. Осталось подтвердить отправку в чате студии.</p>
     <div class="card"><p class="eyebrow" style="margin:0 0 6px">Следующие шаги</p><ol class="steps">
       <li><span class="n">01</span><div><b>Откройте чат</b><span>Проверьте текст и отправьте сообщение</span></div></li>
@@ -286,7 +310,7 @@ function route() {
   const [a, b] = (location.hash || '#/').slice(2).split('/');
   const tab = ({ services: 'services', solutions: 'solutions', cases: 'cases', brief: 'brief', calc: 'services' })[a] || (a === 'faq' ? 'home' : 'home');
   document.querySelectorAll('.tabs a').forEach(x => x.dataset.tab === tab ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current'));
-  const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'privacy', 'terms', 'consent', 'docs'].includes(a);
+  const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'privacy', 'terms', 'consent', 'docs', 'admin'].includes(a);
   setBack(deep ? () => back() : null);
   if (a === 'services') b ? service(b) : services();
   else if (a === 'solutions') solutions();
@@ -296,6 +320,7 @@ function route() {
   else if (a === 'privacy' || a === 'terms' || a === 'consent') legal(a);
   else if (a === 'docs') docs();
   else if (a === 'brief') brief();
+  else if (a === 'admin') admin(b);
   else home();
   window.scrollTo(0, 0);
 }
@@ -314,7 +339,7 @@ document.addEventListener('click', e => {
   if (d.fDir) { haptic(); state.dir = d.fDir; return services(); }
   if (d.fPlat) { haptic(); state.plat = d.fPlat; return services(); }
   if ('back' in d) return back();
-  if ('calcRestart' in d) { Object.assign(state.calc, { step: 0, type: null, plat: null, feats: [], urg: null }); return calc(); }
+  if ('calcRestart' in d) { Object.assign(state.calc, { step: 0, type: null, plat: null, feats: [], urg: null, tracked: false }); return calc(); }
   if (d.calc) {
     haptic(); const [field, val] = d.calc.split(':'), k = state.calc;
     if (field === 'feats') { k.feats = k.feats.includes(val) ? k.feats.filter(x => x !== val) : [...k.feats, val]; return calc(); }
@@ -335,5 +360,8 @@ window.addEventListener('hashchange', route);
   Object.assign(state.brief, (await load('brief')) || {});
   bindBack(); bindMain();
   readStart();
+  try { srv.leads = !!(await (await fetch('/api/status')).json()).leads; } catch {}
   route();
+  track('open');
+  isOwner().then(ok => { if (ok) { srv.owner = true; const [a] = (location.hash || '#/').slice(2).split('/'); if (a !== 'admin') route(); } });
 })();
