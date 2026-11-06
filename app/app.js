@@ -307,11 +307,18 @@ function ready(stored = false) {
   setMain('Открыть чат студии', openChat);
 }
 
+/* Вкладка «Пульт» в нижнем меню — только у владельца */
+function addPultTab() {
+  const nav = document.querySelector('.tabs'); if (!nav || nav.querySelector('[data-tab="admin"]')) return;
+  nav.insertAdjacentHTML('beforeend', `<a href="#/admin" data-tab="admin"><span class="pill">${ic('shield')}</span>Пульт</a>`);
+  nav.style.setProperty('--tabs-n', '6');
+}
+
 /* ---------- Навигация ---------- */
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
 function route() {
   const [a, b] = (location.hash || '#/').slice(2).split('/');
-  const tab = ({ services: 'services', solutions: 'solutions', cases: 'cases', brief: 'brief', calc: 'services' })[a] || (a === 'faq' ? 'home' : 'home');
+  const tab = ({ services: 'services', solutions: 'solutions', cases: 'cases', brief: 'brief', admin: 'admin', calc: 'services' })[a] || (a === 'faq' ? 'home' : 'home');
   document.querySelectorAll('.tabs a').forEach(x => x.dataset.tab === tab ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current'));
   const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'privacy', 'terms', 'consent', 'docs', 'admin'].includes(a);
   setBack(deep ? () => back() : null);
@@ -367,5 +374,5 @@ window.addEventListener('hashchange', route);
   try { srv.leads = !!(await (await fetch('/api/status')).json()).leads; } catch {}
   route();
   track('open');
-  isOwner().then(ok => { if (ok) { srv.owner = true; const [a] = (location.hash || '#/').slice(2).split('/'); if (a !== 'admin') route(); } });
+  isOwner().then(ok => { if (ok) { srv.owner = true; addPultTab(); const [a] = (location.hash || '#/').slice(2).split('/'); if (a !== 'admin') route(); } });
 })();
