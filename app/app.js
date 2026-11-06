@@ -134,7 +134,7 @@ function home() {
       <p>Запускаем продажи в Telegram и MAX: бот, каталог, ИИ-ассистент и продвижение в одних руках.</p>
       <div class="tags"><span class="tag">Telegram</span><span class="tag">MAX</span><span class="tag">Веб</span></div>
     </section>
-    ${bannerHtml()}${greetingHtml()}${modeHtml()}
+    ${bannerHtml()}${srv.my ? '<a class="card link" href="#/my"><h3>Мои заявки</h3><p class="meta">Статус, ответы студии и счета</p></a>' : ''}${greetingHtml()}${modeHtml()}
     <h2 class="sec">Что создаём <small>01 / 03</small></h2>
     <div class="grid three">${dirs.map(([d, i, t]) => `<a class="tile" href="#/services" data-dir="${d}">${ic(i)}<b>${t}</b></a>`).join('')}</div>
     <p class="eyebrow" style="margin-top:28px">Почему мы</p>
@@ -150,6 +150,24 @@ function home() {
     ${C.channelTelegram || C.channelMax ? `<h2 class="sec">Канал студии</h2><p class="meta">Кейсы, разборы и цены — подписывайтесь.</p>
     <div class="actions">${C.channelTelegram ? `<button class="btn btn-wide" type="button" data-link="${esc(C.channelTelegram)}">Канал в Telegram ${ic('out')}</button>` : ''}${C.channelMax ? `<button class="btn btn-wide" type="button" data-link="${esc(C.channelMax)}">Канал в MAX ${ic('out')}</button>` : ''}</div>` : ''}${footer()}`;
   setMain('Обсудить проект', () => go('#/brief'));
+}
+
+const MY_ST = { new: 'Принята', work: 'В работе', offer: 'Предложение отправлено', contract: 'Договор и оплата', done: 'Завершена', lost: 'Закрыта' };
+async function myScreen() {
+  view.innerHTML = '<p class="eyebrow">Личное</p><h1>Мои заявки</h1><p class="note">Загружаем…</p>';
+  let d = {};
+  try { d = await (await fetch('/api/my', { headers: { 'X-Platform': P.kind, 'X-Init-Data': P.sdk?.initData || '' } })).json(); } catch {}
+  const L2 = d.leads || [];
+  if (!L2.length) { view.innerHTML = '<p class="eyebrow">Личное</p><h1>Мои заявки</h1><p class="lead">Заявок пока нет. Опишите задачу, и мы ответим в этом мессенджере.</p>'; return setMain('Обсудить проект', () => go('#/brief')); }
+  view.innerHTML = `<p class="eyebrow">Личное</p><h1>Мои заявки</h1>` + L2.map(l => `<div class="card"><p class="eyebrow" style="margin:0 0 6px">№${l.id} · ${esc(new Date(l.created_at).toLocaleDateString('ru-RU'))} · ${esc(MY_ST[l.status] || l.status)}</p>
+    <p>${esc(l.task)}</p>
+    ${l.replies.map(m => `<p class="meta"><b>Студия:</b> ${esc(m.text)}</p>`).join('')}
+    ${l.invoices.map(i => i.status === 'paid' ? `<p class="meta">Счёт «${esc(i.title)}» — ${rub(i.amount_rub)}: оплачен</p>` : `<a class="btn btn-wide" href="#/pay/${esc(i.pub)}">Оплатить «${esc(i.title)}» — ${rub(i.amount_rub)}</a>`).join('')}</div>`).join('');
+  setMain('Новая заявка', () => go('#/brief'));
+}
+async function checkMy() {
+  if (P.kind === 'web') return;
+  try { const d = await (await fetch('/api/my', { headers: { 'X-Platform': P.kind, 'X-Init-Data': P.sdk?.initData || '' } })).json(); if ((d.leads || []).length) { srv.my = true; const [a] = (location.hash || '#/').slice(2).split('/'); if (!a) route(); } } catch {}
 }
 
 function services() {
@@ -357,7 +375,7 @@ function openChat() {
 function ready(stored = false) {
   if (stored) {
     view.innerHTML = `<div class="done">${ic('check')}</div><h1>Заявка отправлена</h1><p class="lead">Мы получили заявку и ответим ${P.kind === 'web' ? 'по указанному контакту' : 'в этом мессенджере'}, обычно в течение рабочего дня.</p>
-      <div class="actions"><a class="btn btn-wide" href="#/cases">Посмотреть кейсы ${ic('arrow')}</a></div>`;
+      <div class="actions"><a class="btn btn-wide" href="#/my">Мои заявки ${ic('arrow')}</a><a class="btn btn-wide" href="#/cases">Посмотреть кейсы ${ic('arrow')}</a></div>`;
     return setMain('На главную', () => go('#/'));
   }
   view.innerHTML = `<div class="done">${ic('check')}</div><h1>Заявка готова</h1><p class="lead">Мы собрали текст. Осталось подтвердить отправку в чате студии.</p>${modeHtml()}
@@ -382,7 +400,7 @@ function route() {
   const [a, b] = (location.hash || '#/').slice(2).split('/');
   const tab = ({ services: 'services', solutions: 'solutions', cases: 'cases', brief: 'brief', admin: 'admin', calc: 'services' })[a] || (a === 'faq' ? 'home' : 'home');
   document.querySelectorAll('.tabs a').forEach(x => x.dataset.tab === tab ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current'));
-  const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'privacy', 'terms', 'consent', 'docs', 'admin'].includes(a);
+  const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'my', 'pay', 'privacy', 'terms', 'consent', 'docs', 'admin'].includes(a);
   setBack(deep ? () => back() : null);
   if (a === 'services') b ? service(b) : services();
   else if (a === 'solutions') solutions();
@@ -391,6 +409,7 @@ function route() {
   else if (a === 'faq') faq();
   else if (a === 'privacy' || a === 'terms' || a === 'consent') legal(a);
   else if (a === 'docs') docs();
+  else if (a === 'my') myScreen();
   else if (a === 'brief') brief();
   else if (a === 'admin') admin(b);
   else if (a === 'pay' && b) payScreen(b);
@@ -445,5 +464,6 @@ window.addEventListener('hashchange', route);
   applyConfig(CFG.blocks);
   route();
   track('open');
+  checkMy();
   isOwner().then(ok => { if (ok) { srv.owner = true; addPultTab(); const [a] = (location.hash || '#/').slice(2).split('/'); if (a !== 'admin') route(); } });
 })();

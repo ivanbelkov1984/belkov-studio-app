@@ -303,6 +303,32 @@ async def lead(request):
     return web.json_response({"ok": True, "stored": True, "id": lid})
 
 
+async def my_requests(request):
+    """Клиент видит только свои заявки, ответы студии и счета (по подписанным данным запуска)."""
+    plat, user = identify(request)
+    if plat not in ("telegram", "max") or not user:
+        return web.json_response({"ok": False, "leads": []}, status=401)
+    pool = request.app["pool"]
+    rows = await pool.fetch(
+        "SELECT id, created_at, status, svc, task FROM leads WHERE platform=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 20",
+        plat, str(user["id"]))
+    ids = [r["id"] for r in rows]
+    msgs = await pool.fetch(
+        "SELECT lead_id, created_at, text FROM lead_messages WHERE lead_id = ANY($1::bigint[]) AND direction='out' AND ok ORDER BY created_at",
+        ids) if ids else []
+    invs = await pool.fetch(
+        "SELECT lead_id, public_id, title, amount_rub, status FROM invoices WHERE lead_id = ANY($1::bigint[]) AND status <> 'canceled' ORDER BY created_at",
+        ids) if ids else []
+    out = []
+    for r in rows:
+        out.append({"id": r["id"], "created_at": r["created_at"].isoformat(), "status": r["status"], "svc": r["svc"],
+                    "task": r["task"][:160],
+                    "replies": [{"at": m["created_at"].isoformat(), "text": m["text"][:1000]} for m in msgs if m["lead_id"] == r["id"]][-5:],
+                    "invoices": [{"pub": i["public_id"], "title": i["title"], "amount_rub": i["amount_rub"], "status": i["status"]}
+                                 for i in invs if i["lead_id"] == r["id"]]})
+    return web.json_response({"ok": True, "leads": out})
+
+
 # ---------- Пульт владельца ----------
 @web.middleware
 async def admin_guard(request, handler):
@@ -957,7 +983,7 @@ async def pay_info(request):
     if inv["status"] == "awaiting_payment" and inv["provider_payment_id"]:
         await refresh_invoice(request.app, inv)
         inv = await pool.fetchrow("SELECT * FROM invoices WHERE public_id=$1", pub)
-    return web.json_response({"ok": True, **inv_view(inv), "online": yk.enabled()})
+    return web.json_response({"ok": True, **inv_view(inv), "online": yk.enabled(), "pending": bool(inv["provider_payment_id"])})
 
 
 async def pay_start(request):
@@ -1128,6 +1154,7 @@ def make_app() -> web.Application:
     r.add_post("/api/promo/check", promo_check)
     r.add_post("/api/event", event)
     r.add_post("/api/lead", lead)
+    r.add_get("/api/my", my_requests)
     r.add_get("/api/admin/whoami", whoami)
     r.add_get("/api/admin/leads", leads_list)
     r.add_get("/api/admin/leads/{id:\\d+}", lead_get)
