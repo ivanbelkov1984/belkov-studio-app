@@ -27,6 +27,8 @@ EOF
 python3 $W/mock.py >$W/mock.log 2>&1 & MOCK=$!
 cd /srv/studio/api
 set -a; . /srv/studio/secrets/db.env; set +a
+sudo -u postgres createdb -O studio_api studio_t3 2>/dev/null
+export DATABASE_URL="${DATABASE_URL%/*}/studio_t3"
 export TG_BOT_TOKEN=111:TEST OWNER_TG_ID=4242 PORT=3099 TG_API_ENABLED=0 MAX_BOT_TOKEN= OWNER_MAX_ID= \
   YOOKASSA_SHOP_ID=000000 YOOKASSA_SECRET_KEY=test_mock YOOKASSA_API_BASE=http://127.0.0.1:3098
 sudo -E -u studio env HOME=/srv/studio python3 app.py >$W/app.log 2>&1 & APP=$!
@@ -57,18 +59,19 @@ echo -n "receipt mark:       "; c -X POST "${H[@]}" $B/admin/invoices/$IID/recei
 c -X POST "${H[@]}" $B/admin/invoices -d '{"title":"E2E webhook","amount_rub":700}' >/dev/null; PUB2=$(j link | sed 's/.*pay=//')
 curl -s -X POST $B/pay/$PUB2 >/dev/null; PID2=$(curl -s http://127.0.0.1:3098/mock/last | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
 curl -s -X POST http://127.0.0.1:3098/mock/succeed/$PID2 >/dev/null
-echo -n "webhook succeeded:  "; c -X POST $B/payments/yookassa -H "Content-Type: application/json" -d "{\"type\":\"notification\",\"event\":\"payment.succeeded\",\"object\":{\"id\":\"$PID2\"}}"
-echo -n "webhook duplicate:  "; c -X POST $B/payments/yookassa -H "Content-Type: application/json" -d "{\"type\":\"notification\",\"event\":\"payment.succeeded\",\"object\":{\"id\":\"$PID2\"}}"
-echo -n "webhook forged id:  "; c -X POST $B/payments/yookassa -H "Content-Type: application/json" -d '{"event":"payment.succeeded","object":{"id":"mock-forged"}}'
+echo -n "webhook succeeded:  "; c -X POST $B/payments/yookassa -H "X-Real-IP: 185.71.76.10" -H "Content-Type: application/json" -d "{\"type\":\"notification\",\"event\":\"payment.succeeded\",\"object\":{\"id\":\"$PID2\"}}"
+echo -n "webhook duplicate:  "; c -X POST $B/payments/yookassa -H "X-Real-IP: 185.71.76.10" -H "Content-Type: application/json" -d "{\"type\":\"notification\",\"event\":\"payment.succeeded\",\"object\":{\"id\":\"$PID2\"}}"
+echo -n "webhook forged id:  "; c -X POST $B/payments/yookassa -H "X-Real-IP: 185.71.76.10" -H "Content-Type: application/json" -d '{"event":"payment.succeeded","object":{"id":"mock-forged"}}'
 # третий: сумма не совпала
 c -X POST "${H[@]}" $B/admin/invoices -d '{"title":"E2E mismatch","amount_rub":900}' >/dev/null; PUB3=$(j link | sed 's/.*pay=//')
 curl -s -X POST $B/pay/$PUB3 >/dev/null; PID3=$(curl -s http://127.0.0.1:3098/mock/last | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
 curl -s -X POST "http://127.0.0.1:3098/mock/succeed/$PID3?amount=1.00" >/dev/null
-echo -n "amount mismatch:    "; c -X POST $B/payments/yookassa -H "Content-Type: application/json" -d "{\"event\":\"payment.succeeded\",\"object\":{\"id\":\"$PID3\"}}"
+echo -n "amount mismatch:    "; c -X POST $B/payments/yookassa -H "X-Real-IP: 185.71.76.10" -H "Content-Type: application/json" -d "{\"event\":\"payment.succeeded\",\"object\":{\"id\":\"$PID3\"}}"
 echo -n "pay info mismatch:  "; c $B/pay/$PUB3
 echo -n "admin list:         "; c "${H[@]}" $B/admin/invoices
 echo -n "no-auth admin:      "; c $B/admin/invoices
 kill $APP $MOCK; sleep 1
-sudo -u postgres psql -q -d studio -c "DELETE FROM invoices WHERE title LIKE 'E2E%'; DELETE FROM audit WHERE detail LIKE 'invoice %';" && echo "test data cleaned"
+sudo -u postgres psql -q -d studio_t3 -c "DELETE FROM invoices WHERE title LIKE 'E2E%'; DELETE FROM audit WHERE detail LIKE 'invoice %';" && echo "test data cleaned"
 grep -iE "traceback|error" $W/app.log | grep -v "notify_owner" | head -5
 rm -rf $W
+sudo -u postgres psql -q -c "DROP DATABASE IF EXISTS studio_t3" && echo 'test db dropped'

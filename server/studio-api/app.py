@@ -52,6 +52,7 @@ PUBLIC_URL = E("PUBLIC_URL", "https://studio.aiservicesint.ru").rstrip("/")
 TG_API_ENABLED = E("TG_API_ENABLED", "0") == "1"
 TG_OFF = "Telegram API недоступен с сервера в РФ: ответьте вручную в Telegram"
 INIT_MAX_AGE = 24 * 3600
+ADMIN_MAX_AGE = 2 * 3600                                   # пульт требует свежую подпись запуска
 
 STATUSES = ["new", "work", "offer", "contract", "done", "lost"]
 KEEP_STATUSES = {"contract", "done"}                      # договорные данные хранятся по сроку договора
@@ -68,7 +69,7 @@ def slug(v, n=32):
 
 
 # ---------- Проверка подписанных данных запуска (Telegram и MAX: одна схема) ----------
-def verify_init_data(init_data: str, bot_token: str) -> dict | None:
+def verify_init_data(init_data: str, bot_token: str, max_age: int = 0) -> dict | None:
     if not init_data or not bot_token:
         return None
     pairs = parse_qsl(init_data, keep_blank_values=True)
@@ -86,7 +87,7 @@ def verify_init_data(init_data: str, bot_token: str) -> dict | None:
         age = time.time() - int(data.get("auth_date", "0"))
     except ValueError:
         return None
-    if age > INIT_MAX_AGE or age < -300:
+    if age > (max_age or INIT_MAX_AGE) or age < -300:
         return None
     try:
         user = json.loads(data.get("user", ""))
@@ -95,13 +96,13 @@ def verify_init_data(init_data: str, bot_token: str) -> dict | None:
     return user if isinstance(user, dict) and "id" in user else None
 
 
-def identify(request) -> tuple[str, dict | None]:
+def identify(request, max_age: int = 0) -> tuple[str, dict | None]:
     plat = request.headers.get("X-Platform", "")
     init = request.headers.get("X-Init-Data", "")
     if plat == "telegram":
-        return plat, verify_init_data(init, TG_BOT_TOKEN)
+        return plat, verify_init_data(init, TG_BOT_TOKEN, max_age)
     if plat == "max":
-        return plat, verify_init_data(init, MAX_BOT_TOKEN)
+        return plat, verify_init_data(init, MAX_BOT_TOKEN, max_age)
     return "web", None
 
 
@@ -220,7 +221,8 @@ def rate_ok(key: str, limit: int, window: int) -> bool:
     arr.append(now)
     _hits[key] = arr
     if len(_hits) > 5000:
-        _hits.clear()
+        for k in sorted(_hits, key=lambda k: (_hits[k] or [0])[-1])[:2500]:
+            _hits.pop(k, None)
     return True
 
 
@@ -241,11 +243,30 @@ async def status(request):
     return web.json_response({"leads": LEADS_ENABLED})
 
 
+BUILTIN_SRC = {"channel", "share", "max", "telegram", "web", "post", "direct"}
+
+
+async def known_src(pool, src: str) -> str:
+    """В статистику попадают только известные источники: иначе анонимный поток раздувает таблицу."""
+    if not src:
+        return ""
+    if src in BUILTIN_SRC or re.fullmatch(r"(src_)?post\d{1,6}", src):
+        return src
+    try:
+        blk = ((await published_blocks(pool)).get("sources") or {}).get("value") or {}
+        names = {str(k).removeprefix("src_") for k in (blk.keys() if isinstance(blk, dict) else [])}
+        if src.removeprefix("src_") in names:
+            return src
+    except Exception:
+        pass
+    return ""
+
+
 async def event(request):
     if not rate_ok("ev:" + client_ip(request), 60, 60):
         return web.json_response({"ok": False}, status=429)
     try:
-        b = await request.json()
+        b = await jbody(request)
     except Exception:
         return web.json_response({"ok": False}, status=400)
     t = slug(b.get("type"), 16)
@@ -253,9 +274,10 @@ async def event(request):
         return web.json_response({"ok": False}, status=400)
     plat = slug(b.get("plat"), 16)
     plat = plat if plat in PLATFORMS else ""
+    src_ok = await known_src(request.app["pool"], slug(b.get("src")))
     await request.app["pool"].execute(
         "INSERT INTO events(day,type,src,plat,n) VALUES(current_date,$1,$2,$3,1) "
-        "ON CONFLICT (day,type,src,plat) DO UPDATE SET n = events.n + 1", t, slug(b.get("src")), plat)
+        "ON CONFLICT (day,type,src,plat) DO UPDATE SET n = events.n + 1", t, src_ok, plat)
     return web.json_response({"ok": True})
 
 
@@ -265,7 +287,7 @@ async def lead(request):
     if not rate_ok("lead:" + client_ip(request), 5, 600):
         return web.json_response({"ok": False, "error": "Слишком много заявок, попробуйте позже"}, status=429)
     try:
-        b = await request.json()
+        b = await jbody(request)
     except Exception:
         return web.json_response({"ok": False}, status=400)
     if b.get("consent") is not True:
@@ -353,7 +375,7 @@ async def my_delete(request):
 @web.middleware
 async def admin_guard(request, handler):
     if request.path.startswith("/api/admin/") and request.path != "/api/admin/whoami":
-        plat, user = identify(request)
+        plat, user = identify(request, ADMIN_MAX_AGE)
         if not is_owner(plat, user):
             return web.json_response({"ok": False, "error": "forbidden"}, status=403)
         request["owner"] = (plat, user)
@@ -366,6 +388,20 @@ async def whoami(request):
     if not user:
         return web.json_response({"ok": False, "owner": False}, status=401)
     return web.json_response({"ok": True, "platform": plat, "id": str(user["id"]), "owner": is_owner(plat, user)})
+
+
+async def jbody(request) -> dict:
+    b = await request.json()
+    if not isinstance(b, dict):
+        raise web.HTTPBadRequest(text="bad body")
+    return b
+
+
+def mid(request) -> int:
+    v = request.match_info["id"]
+    if not v.isdecimal() or len(v) > 12:
+        raise web.HTTPBadRequest(text='bad id')
+    return int(v)
 
 
 def row(r) -> dict:
@@ -389,7 +425,7 @@ async def leads_list(request):
 
 
 async def lead_get(request):
-    lid = int(request.match_info["id"])
+    lid = mid(request)
     pool = request.app["pool"]
     r = await pool.fetchrow("SELECT * FROM leads WHERE id=$1", lid)
     if not r:
@@ -401,8 +437,8 @@ async def lead_get(request):
 
 
 async def lead_patch(request):
-    lid = int(request.match_info["id"])
-    b = await request.json()
+    lid = mid(request)
+    b = await jbody(request)
     pool = request.app["pool"]
     cur = await pool.fetchrow("SELECT status, lost_reason FROM leads WHERE id=$1", lid)
     if not cur:
@@ -447,8 +483,8 @@ async def lead_patch(request):
 
 
 async def lead_reply(request):
-    lid = int(request.match_info["id"])
-    text = clean((await request.json()).get("text"), 3500)
+    lid = mid(request)
+    text = clean((await jbody(request)).get("text"), 3500)
     if not text:
         return web.json_response({"ok": False, "error": "пустой ответ"}, status=400)
     pool = request.app["pool"]
@@ -467,7 +503,7 @@ async def lead_reply(request):
 
 
 async def lead_delete(request):
-    lid = int(request.match_info["id"])
+    lid = mid(request)
     pool = request.app["pool"]
     n = await pool.execute("DELETE FROM leads WHERE id=$1", lid)
     await audit(pool, "deleted_by_request", lid, n)
@@ -500,7 +536,7 @@ async def posts_list(request):
 
 
 async def post_create(request):
-    b = await request.json()
+    b = await jbody(request)
     text = clean(b.get("text"), 4000)
     if not text:
         return web.json_response({"ok": False, "error": "пустой текст"}, status=400)
@@ -526,7 +562,7 @@ async def post_create(request):
 
 
 async def post_cancel(request):
-    pid = int(request.match_info["id"])
+    pid = mid(request)
     r = await request.app["pool"].execute("UPDATE posts SET status='canceled' WHERE id=$1 AND status='scheduled'", pid)
     return web.json_response({"ok": r.endswith("1")})
 
@@ -749,7 +785,7 @@ async def config_save(request):
     key = request.match_info["key"]
     if key not in VALIDATORS:
         return web.json_response({"ok": False, "error": "неизвестный блок"}, status=404)
-    b = await request.json()
+    b = await jbody(request)
     try:
         value = VALIDATORS[key](b.get("value"))
     except BadBlock as e:
@@ -774,7 +810,7 @@ async def config_rollback(request):
     key = request.match_info["key"]
     if key not in VALIDATORS:
         return web.json_response({"ok": False}, status=404)
-    b = await request.json()
+    b = await jbody(request)
     try:
         target = int(b.get("version"))
     except (TypeError, ValueError):
@@ -818,7 +854,7 @@ async def promo_check(request):
     if not rate_ok("promo:" + client_ip(request), 20, 60):
         return web.json_response({"ok": False, "error": "Слишком часто"}, status=429)
     try:
-        b = await request.json()
+        b = await jbody(request)
     except Exception:
         return web.json_response({"ok": False}, status=400)
     found = await find_promo(request.app["pool"], b.get("code"))
@@ -842,8 +878,8 @@ async def autoreply(app, plat: str, user, mode: dict):
 
 # ---------- Заметки, метрики, экспорт ----------
 async def note_add(request):
-    lid = int(request.match_info["id"])
-    text = clean((await request.json()).get("text"), 2000)
+    lid = mid(request)
+    text = clean((await jbody(request)).get("text"), 2000)
     if not text:
         return web.json_response({"ok": False, "error": "пустая запись"}, status=400)
     pool = request.app["pool"]
@@ -968,6 +1004,7 @@ async def apply_payment(app, payment: dict, expected: str | None = None) -> str:
         "UPDATE invoices SET status='paid', payment_ref=$2, paid_at=now() "
         "WHERE public_id=$1 AND status='awaiting_payment' RETURNING id, lead_id", pub, pid)
     if not upd:
+        await app["msg"].notify_owner(f"ВНИМАНИЕ: платёж {pid} на {amount} ₽ по счёту #{inv['id']} ({inv['status']}) не применён. Проверьте и при необходимости верните деньги.")
         return "not_payable"
     if upd["lead_id"]:
         await pool.execute("UPDATE leads SET status='contract', updated_at=now() WHERE id=$1 AND status IN ('new','work','offer')", upd["lead_id"])
@@ -996,6 +1033,8 @@ def inv_view(r) -> dict:
 
 async def pay_info(request):
     pub = request.match_info["pub"]
+    if not rate_ok("payinfo:" + pub, 30, 60) or not rate_ok("payinfo-ip:" + client_ip(request), 120, 60):
+        return web.json_response({"ok": False, "error": "Слишком часто"}, status=429)
     pool = request.app["pool"]
     inv = await pool.fetchrow("SELECT * FROM invoices WHERE public_id=$1", pub)
     if not inv:
@@ -1049,10 +1088,11 @@ async def yookassa_notify(request):
     """Уведомление ЮKassa: тело — только подсказка, решает повторный запрос платежа через API."""
     if not yk.enabled():
         return web.json_response({"ok": False}, status=503)
+    if not yk.ip_allowed(client_ip(request)):
+        log.warning("yookassa notification from non-YooKassa address rejected")
+        return web.json_response({"ok": False}, status=403)
     if not rate_ok("yk", 120, 60):
         return web.json_response({"ok": False}, status=429)
-    if not yk.ip_allowed(client_ip(request)):
-        log.warning("yookassa notification from non-YooKassa address (re-fetch decides)")
     try:
         data = json.loads(await request.read())
     except (ValueError, UnicodeDecodeError):
@@ -1077,7 +1117,7 @@ async def invoices_list(request):
 
 
 async def invoice_create(request):
-    b = await request.json()
+    b = await jbody(request)
     title = clean(b.get("title"), 120)
     try:
         amount = int(b.get("amount_rub"))
@@ -1086,7 +1126,7 @@ async def invoice_create(request):
     if not title or amount <= 0 or amount > 1_000_000:
         return web.json_response({"ok": False, "error": "Нужны название и сумма от 1 до 1 000 000 ₽"}, status=400)
     lead_id = b.get("lead_id")
-    lead_id = int(lead_id) if str(lead_id or "").isdigit() else None
+    lead_id = int(lead_id) if str(lead_id or "").isdecimal() and len(str(lead_id)) < 12 else None
     pub = secrets.token_urlsafe(12)
     iid = await request.app["pool"].fetchval(
         "INSERT INTO invoices(public_id, lead_id, title, amount_rub) VALUES($1,$2,$3,$4) RETURNING id", pub, lead_id, title, amount)
@@ -1095,7 +1135,7 @@ async def invoice_create(request):
 
 
 async def invoice_action(request):
-    iid, action = int(request.match_info["id"]), request.match_info["action"]
+    iid, action = mid(request), request.match_info["action"]
     pool = request.app["pool"]
     if action == "receipt":
         r = await pool.execute("UPDATE invoices SET receipt_done=true WHERE id=$1 AND status='paid'", iid)

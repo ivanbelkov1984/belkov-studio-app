@@ -14,6 +14,10 @@ export async function api(path, opt = {}) {
   const headers = { 'Content-Type': 'application/json', 'X-Platform': P.kind, 'X-Init-Data': P.sdk?.initData || '' };
   const r = await fetch('/api/' + path, { ...opt, headers: { ...headers, ...(opt.headers || {}) } });
   let body = {}; try { body = await r.json(); } catch {}
+  if (r.status === 403 && ownerCache === true && !path.startsWith('admin/whoami')) {
+    // подпись запуска живёт 2 часа: после этого пульт просит открыть приложение заново
+    body.error = 'Сессия пульта устарела. Закройте приложение и откройте его снова.';
+  }
   return { status: r.status, ...body };
 }
 

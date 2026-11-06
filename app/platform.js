@@ -24,7 +24,7 @@ export const haptic = (k = 'light') => { try { P.sdk?.HapticFeedback?.impactOccu
 export const hapticOk = () => { try { P.sdk?.HapticFeedback?.notificationOccurred?.('success'); } catch {} };
 
 export function openLink(url) {
-  if (!url) return;
+  if (!url || !/^(https:\/\/|tg:\/\/|max:\/\/)/.test(url)) return;
   try {
     if (P.kind === 'telegram' && /^https:\/\/t\.me\//.test(url)) return P.sdk.openTelegramLink(url);
     if (P.kind === 'max' && /^https:\/\/max\.ru\//.test(url) && P.sdk.openMaxLink) return P.sdk.openMaxLink(url);

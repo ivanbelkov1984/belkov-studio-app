@@ -4,6 +4,8 @@ set -u
 W=$(mktemp -d); chmod 755 $W
 cd /srv/studio/api
 set -a; . /srv/studio/secrets/db.env; set +a
+sudo -u postgres createdb -O studio_api studio_t0 2>/dev/null
+export DATABASE_URL="${DATABASE_URL%/*}/studio_t0"
 export TG_BOT_TOKEN=111:TEST OWNER_TG_ID=4242 LEADS_ENABLED=1 PORT=3099 TG_API_ENABLED=0 MAX_BOT_TOKEN= OWNER_MAX_ID= YOOKASSA_SHOP_ID= YOOKASSA_SECRET_KEY=
 sudo -E -u studio env HOME=/srv/studio python3 app.py >$W/app.log 2>&1 & APP=$!
 sleep 3
@@ -47,6 +49,7 @@ echo -n "lost with reason:    "; c -X PATCH "${H[@]}" $B/admin/leads/$LID -d '{"
 echo -n "lead card:           "; curl -s "${H[@]}" $B/admin/leads/$LID | python3 -c "import json,sys;l=json.load(sys.stdin)['lead'];print(l['status'],l['lost_reason'],l['tags'],bool(l['first_response_at']))"
 echo -n "no-auth today:       "; curl -s -o /dev/null -w "%{http_code}\n" $B/admin/today
 kill $APP; sleep 1
-sudo -u postgres psql -q -d studio -c "DELETE FROM leads WHERE task='P0 тест'; DELETE FROM content_pointers; DELETE FROM content_versions; DELETE FROM audit WHERE action LIKE 'content_%' OR detail IN ('lost','work');" && echo "test data cleaned"
+sudo -u postgres psql -q -d studio_t0 -c "DELETE FROM leads WHERE task='P0 тест'; DELETE FROM content_pointers; DELETE FROM content_versions; DELETE FROM audit WHERE action LIKE 'content_%' OR detail IN ('lost','work');" && echo "test data cleaned"
 grep -iE "traceback|error" $W/app.log | head -5
 rm -rf $W
+sudo -u postgres psql -q -c "DROP DATABASE IF EXISTS studio_t0" && echo 'test db dropped'

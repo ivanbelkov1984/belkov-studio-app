@@ -2,7 +2,8 @@
 # Развёртывание пульта студии на сервере. Запуск: sudo bash deploy.sh <каталог с файлами>
 # Идемпотентен. Секреты не создаёт вслепую: токены и ID владельца вносит владелец в /srv/studio/secrets/.env.
 set -euo pipefail
-SRC="${1:-/tmp/studio-api}"
+SRC="${1:?укажите каталог с файлами}"
+[ -d "$SRC" ] && [ "$(stat -c %u "$SRC")" = 0 ] && [ -z "$(find "$SRC" -maxdepth 1 -perm -0002)" ] || { echo "каталог $SRC должен принадлежать root и не быть доступным на запись всем"; exit 1; }
 
 apt-get -qq install -y python3-aiohttp python3-asyncpg >/dev/null
 
@@ -15,7 +16,7 @@ install -m 644 -o root -g root "$SRC/app.py" "$SRC/schema.sql" "$SRC/yookassa.py
 # База и роль (пароль генерируется на сервере, в консоль не выводится)
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='studio_api'" | grep -q 1; then
   PW=$(openssl rand -hex 24)
-  sudo -u postgres psql -qc "CREATE ROLE studio_api LOGIN PASSWORD '$PW'"
+  sudo -u postgres psql -q <<<"CREATE ROLE studio_api LOGIN PASSWORD '$PW'"
   sudo -u postgres createdb -O studio_api studio
   umask 077; echo "DATABASE_URL=postgresql://studio_api:$PW@127.0.0.1:5432/studio" > /srv/studio/secrets/db.env
 fi
