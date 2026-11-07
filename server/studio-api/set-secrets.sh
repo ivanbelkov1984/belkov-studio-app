@@ -28,8 +28,19 @@ ask YOOKASSA_SECRET_KEY "ЮKassa секретный ключ" 1
 ssh -i "$KEY" -o BatchMode=yes "$HOST" 'sudo python3 -c "
 import sys,re
 p=\"/srv/studio/secrets/.env\"; s=open(p).read()
+import json,ssl,urllib.request
+def check_max(tok):
+    ca=re.search(r\"(?m)^MAX_CA_BUNDLE=(.*)$\",s)
+    ctx=ssl.create_default_context(cafile=ca.group(1).strip()) if ca else None
+    try:
+        d=json.loads(urllib.request.urlopen(urllib.request.Request(\"https://platform-api2.max.ru/me\",headers={\"Authorization\":tok}),timeout=20,context=ctx).read())
+    except Exception as e:
+        sys.exit(\"MAX не принял токен: \"+str(e)[:80])
+    if d.get(\"username\")!=\"se14910384_1_bot\":
+        sys.exit(\"НЕ ТОТ БОТ: это токен бота \"+str(d.get(\"username\"))+\", нужен se14910384_1_bot (Студия SMM). Ничего не записано.\")
 for line in sys.stdin.read().splitlines():
     k,v=line.split(\"=\",1)
+    if k==\"MAX_BOT_TOKEN\": check_max(v)
     s=re.sub(r\"(?m)^\"+re.escape(k)+r\"=.*$\",lambda m:k+\"=\"+v,s) if re.search(r\"(?m)^\"+re.escape(k)+\"=\",s) else s+k+\"=\"+v+\"\n\"
 open(p,\"w\").write(s)
 " && sudo systemctl restart studio-api && sleep 2 && curl -fsS http://127.0.0.1:3001/api/health >/dev/null && echo "Сохранено, пульт перезапущен."' < "$TMP"
