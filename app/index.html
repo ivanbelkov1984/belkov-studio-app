@@ -15,6 +15,16 @@
 <meta property="og:image" content="https://studio.aiservicesint.ru/img/logo-512.png">
 <link rel="stylesheet" href="app.css">
 <!-- SDK мессенджеров. Вне мессенджера приложение работает как обычная страница. -->
+<script>
+/* Диагностика запуска: если приложение не стартовало за 8 секунд или упало с ошибкой, отправляем причину на сервер (без персональных данных). */
+(function () {
+  var sent = 0;
+  function rep(m) { if (sent++ > 3) return; try { fetch('/api/client-error', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ m: String(m).slice(0, 300), ua: navigator.userAgent.slice(0, 120), sdk: (window.WebApp ? 'max' : '') + (window.Telegram && window.Telegram.WebApp ? 'tg' : '') }) }); } catch (e) {} }
+  addEventListener('error', function (e) { rep('error: ' + (e.message || '') + ' @' + (e.filename || '').split('/').pop() + ':' + (e.lineno || '')); });
+  addEventListener('unhandledrejection', function (e) { rep('rejection: ' + (e.reason && e.reason.message || e.reason)); });
+  setTimeout(function () { if (!window.__booted) rep('not booted in 8s; step=' + window.__step + '; readyState=' + document.readyState); }, 8000);
+})();
+</script>
 <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 <script src="https://st.max.ru/js/max-web-app.js" async></script>
 <script type="module" src="app.js"></script>

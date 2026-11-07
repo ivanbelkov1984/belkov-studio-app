@@ -45,6 +45,7 @@ LEADS_ENABLED = E("LEADS_ENABLED", "0") == "1"          # приём заяво�
 CONSENT_VERSION = E("CONSENT_VERSION", "2026-11-05")
 TG_APP_LINK = E("TG_APP_LINK", "https://t.me/BelkovSMM_bot")
 MAX_APP_LINK = E("MAX_APP_LINK", "https://max.ru/se14910384_1_bot")
+MAX_BOT_POLL = E("MAX_BOT_POLL", "1") == "1"            # приветствие и меню бота (/start) через long polling
 RETENTION_DAYS = int(E("RETENTION_DAYS", "365"))
 PUBLIC_URL = E("PUBLIC_URL", "https://studio.aiservicesint.ru").rstrip("/")
 # Telegram Bot API заблокирован из дата-центров РФ: по умолчанию серверные вызовы Telegram выключены.
@@ -155,6 +156,15 @@ class Messengers:
                 return {"ok": False, "error": f"MAX: {type(e).__name__}"}
         return {"ok": False, "error": "MAX: повторы исчерпаны"}
 
+    async def max_get(self, path: str) -> dict:
+        headers = {"Authorization": MAX_BOT_TOKEN, "Accept": "application/json"}
+        async with self.s.get(f"{MAX_API_BASE}{path}", headers=headers, ssl=self.max_ssl,
+                              timeout=aiohttp.ClientTimeout(total=50)) as r:
+            data = await r.json(content_type=None)
+            if r.status >= 400:
+                raise RuntimeError(f"MAX {r.status}: {str(data)[:200]}")
+            return data
+
     async def to_user(self, plat: str, user_id: str, text: str) -> dict:
         if plat == "telegram":
             res = await self.tg("sendMessage", {"chat_id": user_id, "text": text})
@@ -243,7 +253,7 @@ async def status(request):
     return web.json_response({"leads": LEADS_ENABLED})
 
 
-BUILTIN_SRC = {"channel", "share", "max", "telegram", "web", "post", "direct"}
+BUILTIN_SRC = {"channel", "share", "max", "telegram", "web", "post", "direct", "bot"}
 
 
 async def known_src(pool, src: str) -> str:
@@ -278,6 +288,18 @@ async def event(request):
     await request.app["pool"].execute(
         "INSERT INTO events(day,type,src,plat,n) VALUES(current_date,$1,$2,$3,1) "
         "ON CONFLICT (day,type,src,plat) DO UPDATE SET n = events.n + 1", t, src_ok, plat)
+    return web.json_response({"ok": True})
+
+
+async def client_error(request):
+    """Причина сбоя запуска из браузера клиента (без персональных данных), только в журнал."""
+    if not rate_ok("cerr:" + client_ip(request), 10, 600):
+        return web.json_response({"ok": False}, status=429)
+    try:
+        b = await jbody(request)
+    except Exception:
+        return web.json_response({"ok": False}, status=400)
+    log.warning("client-error %s | ua=%s | sdk=%s", clean(b.get("m"), 300), clean(b.get("ua"), 120), clean(b.get("sdk"), 10))
     return web.json_response({"ok": True})
 
 
@@ -1189,6 +1211,74 @@ async def scheduler(app):
             pass
 
 
+# ---------- Приветствие и меню бота в MAX ----------
+BOT_HELLO = ("Здравствуйте! Это студия Белькова: боты, мини-приложения и SMM для Telegram и MAX под ключ. "
+             "Откройте приложение: услуги, цены, кейсы и заявка.")
+BOT_HELP = ("Как с нами связаться: нажмите «Заявка» и опишите задачу, или напишите сюда, мы ответим в рабочее время. "
+            "Документы и политика обработки данных есть в приложении, раздел «Документы».")
+
+
+def bot_keyboard() -> list:
+    return [[{"type": "link", "text": "Открыть студию", "url": f"{MAX_APP_LINK}?startapp=src_bot"}],
+            [{"type": "link", "text": "Услуги", "url": f"{MAX_APP_LINK}?startapp=services__src_bot"},
+             {"type": "link", "text": "Заявка", "url": f"{MAX_APP_LINK}?startapp=brief__src_bot"}],
+            [{"type": "callback", "text": "Помощь", "payload": "help"}]]
+
+
+async def bot_reply(app, uid, text: str, keyboard: bool = True):
+    body = {"text": text}
+    if keyboard:
+        body["attachments"] = [{"type": "inline_keyboard", "payload": {"buttons": bot_keyboard()}}]
+    return await app["msg"].max(f"user_id={uid}", body)
+
+
+async def bot_update(app, u: dict):
+    t = u.get("update_type")
+    if t == "bot_started":
+        uid = (u.get("user") or {}).get("user_id")
+        if uid and rate_ok(f"botmsg:{uid}", 3, 60):
+            await bot_reply(app, uid, BOT_HELLO)
+    elif t == "message_created":
+        m = u.get("message") or {}
+        sender = m.get("sender") or {}
+        uid = sender.get("user_id")
+        if not uid or sender.get("is_bot") or not rate_ok(f"botmsg:{uid}", 3, 60):
+            return
+        text = clean(((m.get("body") or {}).get("text") or ""), 200).lower()
+        if text.startswith("/help") or "помощ" in text:
+            await bot_reply(app, uid, BOT_HELP)
+        else:
+            await bot_reply(app, uid, BOT_HELLO)
+    elif t == "message_callback":
+        cb = u.get("callback") or {}
+        uid = (cb.get("user") or {}).get("user_id")
+        if uid and cb.get("payload") == "help" and rate_ok(f"botmsg:{uid}", 6, 60):
+            await bot_reply(app, uid, BOT_HELP, keyboard=False)
+
+
+async def max_bot_loop(app):
+    marker, errors = None, 0
+    while True:
+        try:
+            q = "/updates?types=bot_started,message_created,message_callback&timeout=30&limit=50" + (f"&marker={marker}" if marker else "")
+            data = await app["msg"].max_get(q)
+            errors = 0
+            if data.get("marker") is not None:
+                marker = data["marker"]
+            for u in data.get("updates") or []:
+                try:
+                    await bot_update(app, u)
+                except Exception:
+                    log.exception("bot_update")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            errors += 1
+            if errors in (1, 10, 100):
+                log.warning("max bot polling: %s", str(e)[:200])
+            await asyncio.sleep(min(300, 3 * errors))
+
+
 async def on_start(app):
     app["pool"] = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql"), encoding="utf-8") as f:
@@ -1197,10 +1287,13 @@ async def on_start(app):
     app["msg"] = Messengers(app["http"])
     app["wake"] = asyncio.Event()
     app["bg"] = asyncio.create_task(scheduler(app))
+    app["bot"] = asyncio.create_task(max_bot_loop(app)) if (MAX_BOT_TOKEN and MAX_BOT_POLL) else None
 
 
 async def on_stop(app):
     app["bg"].cancel()
+    if app.get("bot"):
+        app["bot"].cancel()
     await app["http"].close()
     await app["pool"].close()
 
@@ -1214,6 +1307,7 @@ def make_app() -> web.Application:
     r.add_post("/api/promo/check", promo_check)
     r.add_post("/api/event", event)
     r.add_post("/api/lead", lead)
+    r.add_post("/api/client-error", client_error)
     r.add_get("/api/my", my_requests)
     r.add_post("/api/my/delete", my_delete)
     r.add_get("/api/admin/whoami", whoami)

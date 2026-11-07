@@ -53,7 +53,7 @@ function applyConfig(blocks = {}) {
 async function loadConfig() {
   let cfg = null;
   try {
-    const r = await fetch('/api/config', { cache: 'no-cache' });
+    const r = await fetch('/api/config', { cache: 'no-cache', signal: AbortSignal.timeout(5000) });
     if (r.ok) { cfg = await r.json(); try { localStorage.setItem('cfg', JSON.stringify(cfg)); } catch {} }
   } catch {}
   if (!cfg) { try { cfg = JSON.parse(localStorage.getItem('cfg') || 'null'); } catch {} }
@@ -107,6 +107,7 @@ function readStart() {
     if (part.startsWith('src_')) src = part.slice(4);
     else if (part.startsWith('svc_')) location.hash = `#/services/${part.slice(4)}`;
     else if (part.startsWith('case_')) location.hash = `#/cases/${part.slice(5)}`;
+    else if (part === 'services') location.hash = '#/services';
     else if (part === 'calc') location.hash = '#/calc';
     else if (part === 'brief') location.hash = '#/brief';
     else if (part === 'admin') location.hash = '#/admin';
@@ -463,17 +464,24 @@ document.addEventListener('input', e => { const f = e.target.closest('[data-brie
 window.addEventListener('hashchange', route);
 
 (async () => {
+  window.__step = 'platform';
   await initPlatform();
+  window.__step = 'data';
   [S, D, PR, L] = await Promise.all(['data/services.json', 'data/content.json', 'data/pricing.json', 'data/legal.json'].map(u => fetch(u).then(r => r.json())));
+  window.__step = 'draft';
   Object.assign(state.brief, (await load('brief')) || {});
+  window.__step = 'status';
   bindBack(); bindMain();
   window.addEventListener('offline', () => toast('Нет связи с интернетом. Черновик заявки сохранён на устройстве.', 8000));
   window.addEventListener('online', () => { $('#toast').hidden = true; });
   readStart();
-  try { srv.leads = !!(await (await fetch('/api/status')).json()).leads; } catch {}
+  try { srv.leads = !!(await (await fetch('/api/status', { signal: AbortSignal.timeout(5000) })).json()).leads; } catch {}
+  window.__step = 'config';
   await loadConfig();
   applyConfig(CFG.blocks);
+  window.__step = 'route';
   route();
+  window.__booted = true;
   track('open');
   checkMy();
   isOwner().then(ok => { if (ok) { srv.owner = true; addPultTab(); const [a] = (location.hash || '#/').slice(2).split('/'); if (a !== 'admin') route(); } });

@@ -60,17 +60,20 @@ export function bindMain() {
   document.getElementById('dock')?.querySelector('button')?.addEventListener('click', () => mainHandler && mainHandler());
 }
 
+/* Любой вызов SDK мессенджера ограничен по времени: если он «завис», приложение всё равно запускается */
+const timeout = (p, ms = 1500) => Promise.race([Promise.resolve(p), new Promise((_, rej) => setTimeout(() => rej(new Error('sdk timeout')), ms))]);
+
 /* Хранилище черновика: облако Telegram, DeviceStorage MAX или localStorage */
 export async function save(key, val) {
   const s = JSON.stringify(val);
   try { if (P.kind === 'telegram' && P.sdk.CloudStorage) return P.sdk.CloudStorage.setItem(key, s); } catch {}
-  try { if (P.kind === 'max' && P.sdk.DeviceStorage) return await P.sdk.DeviceStorage.setItem(key, s); } catch {}
+  try { if (P.kind === 'max' && P.sdk.DeviceStorage) return await timeout(P.sdk.DeviceStorage.setItem(key, s)); } catch {}
   try { localStorage.setItem(key, s); } catch {}
 }
 export async function load(key) {
   try {
-    if (P.kind === 'telegram' && P.sdk.CloudStorage) return await new Promise(r => P.sdk.CloudStorage.getItem(key, (e, v) => r(v ? JSON.parse(v) : null)));
-    if (P.kind === 'max' && P.sdk.DeviceStorage) { const v = await P.sdk.DeviceStorage.getItem(key); return v ? JSON.parse(v?.value ?? v) : null; }
+    if (P.kind === 'telegram' && P.sdk.CloudStorage) return await timeout(new Promise(r => P.sdk.CloudStorage.getItem(key, (e, v) => r(v ? JSON.parse(v) : null))));
+    if (P.kind === 'max' && P.sdk.DeviceStorage) { const v = await timeout(P.sdk.DeviceStorage.getItem(key)); return v ? JSON.parse(v?.value ?? v) : null; }
   } catch {}
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; }
 }
