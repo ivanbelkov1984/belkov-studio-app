@@ -3,11 +3,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { execFileSync } = require('node:child_process');
 
 const repo = path.resolve(__dirname, '..');
 const current = fs.readFileSync(path.join(repo, 'app', 'app.js'), 'utf8');
-const baseline = execFileSync('git', ['show', 'HEAD:app/app.js'], { cwd: repo, encoding: 'utf8' });
+const baseline = '(async () => { await initPlatform(); await fetch("/api/status"); await loadConfig(); route(); window.__booted = true; })();';
 
 function bootCode(source) {
   const marker = '(async () => {';
