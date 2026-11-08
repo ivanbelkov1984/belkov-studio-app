@@ -463,26 +463,72 @@ document.addEventListener('click', async e => {
 document.addEventListener('input', e => { const f = e.target.closest('[data-brief]'); if (f && e.target.name) state.brief[e.target.name] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; });
 window.addEventListener('hashchange', route);
 
+// Public content is never allowed to wait for CRM APIs before the first screen.
+async function loadPublicJson(path) {
+  const key = 'studio.static:' + path;
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = setTimeout(() => { if (ctrl) ctrl.abort(); }, 5500);
+  try {
+    const response = await fetch(path, ctrl ? { signal: ctrl.signal } : {});
+    if (!response.ok) throw new Error('Public data unavailable');
+    const data = await response.json();
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch {}
+    return data;
+  } catch (error) {
+    // Static business catalogue, never private CRM data. Offline fallback only.
+    try { const cached = localStorage.getItem(key); if (cached) return JSON.parse(cached); } catch {}
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 (async () => {
-  window.__step = 'platform';
-  await initPlatform();
-  window.__step = 'data';
-  [S, D, PR, L] = await Promise.all(['data/services.json', 'data/content.json', 'data/pricing.json', 'data/legal.json'].map(u => fetch(u).then(r => r.json())));
-  window.__step = 'draft';
-  Object.assign(state.brief, (await load('brief')) || {});
-  window.__step = 'status';
-  bindBack(); bindMain();
-  window.addEventListener('offline', () => toast('Нет связи с интернетом. Черновик заявки сохранён на устройстве.', 8000));
-  window.addEventListener('online', () => { $('#toast').hidden = true; });
-  readStart();
-  try { srv.leads = !!(await (await fetch('/api/status', { signal: AbortSignal.timeout(5000) })).json()).leads; } catch {}
-  window.__step = 'config';
-  await loadConfig();
-  applyConfig(CFG.blocks);
-  window.__step = 'route';
-  route();
-  window.__booted = true;
-  track('open');
-  checkMy();
-  isOwner().then(ok => { if (ok) { srv.owner = true; addPultTab(); const [a] = (location.hash || '#/').slice(2).split('/'); if (a !== 'admin') route(); } });
+  try {
+    window.__step = 'platform';
+    await initPlatform();
+    window.__step = 'data';
+    [S, D, PR, L] = await Promise.all(['data/services.json', 'data/content.json', 'data/pricing.json', 'data/legal.json'].map(loadPublicJson));
+    window.__step = 'draft';
+    Object.assign(state.brief, (await load('brief')) || {});
+    bindBack(); bindMain();
+    window.addEventListener('offline', () => toast('Нет связи с интернетом. Черновик заявки сохранён на устройстве.', 8000));
+    window.addEventListener('online', () => { $('#toast').hidden = true; });
+    readStart();
+
+    // First paint: bundled public data only. No owner privileges are granted.
+    window.__step = 'route';
+    route();
+    window.__booted = true;
+    track('open');
+    checkMy();
+    isOwner().then(ok => {
+      if (ok) {
+        srv.owner = true;
+        addPultTab();
+        const [a] = (location.hash || '#/').slice(2).split('/');
+        if (a !== 'admin') route();
+      }
+    }).catch(() => {});
+
+    // Optional server state and CRM config load independently after first paint.
+    // A 5-second timeout must not become a 10-second blank-screen sequence.
+    void (async () => {
+      const [status] = await Promise.all([
+        fetch('/api/status', { signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined })
+          .then(r => r.ok ? r.json() : null).catch(() => null),
+        loadConfig().catch(() => {})
+      ]);
+      if (status) srv.leads = !!status.leads;
+      applyConfig(CFG.blocks);
+      route();
+    })().catch(() => {});
+  } catch (error) {
+    window.__step = 'failed';
+    // No traceback or private data shown to visitors; retry works after a drop.
+    if (view) {
+      view.innerHTML = '<section style="padding:32px 20px;text-align:center;color:#fff"><h2>Не удалось загрузить данные</h2><p>Проверьте соединение и повторите попытку.</p><button id="studio-retry" type="button" style="padding:12px 22px;border-radius:12px">Повторить</button></section>';
+      document.getElementById('studio-retry')?.addEventListener('click', () => location.reload());
+    }
+  }
 })();
