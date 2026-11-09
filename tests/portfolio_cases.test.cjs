@@ -9,7 +9,7 @@ assert.deepEqual(D.cases.map(c => c.id), ['triumf','hitru']);
 assert.equal(D.cases[0].demo, 'https://t.me/TriumphMoto_bot/catalog?startapp=src_studio');
 assert.equal(D.cases[1].demo, 'https://music.aiservicesint.ru/player');
 assert.match(D.cases[1].galleryNote, /дизайн-референсы/);
-assert.doesNotMatch(src, /D\\.cases\\[0\\]/);
+assert.equal(src.includes("D.cases[0]"), false);
 for (const c of D.cases) for (const [file] of c.gallery || []) {
   const f = path.join(root, 'app', file);
   assert.ok(fs.existsSync(f), 'missing '+file);
@@ -18,9 +18,9 @@ for (const c of D.cases) for (const [file] of c.gallery || []) {
 const section = src.slice(src.indexOf('function cases() {'), src.indexOf('/* ---------- Калькулятор', src.indexOf('function cases() {')));
 const ctx = {D, view:{innerHTML:''}, state:{brief:{}}, caseById:id=>D.cases.find(x=>x.id===id), esc:s=>String(s??''), tags:a=>a.join('|'), ic:()=>'', backBtn:()=>'', setMain:(label,fn)=>{ctx.main=fn}, go:url=>{ctx.route=url}};
 const ui = new Function('s','with(s){'+section+';return {cases,caseScreen}}')(ctx);
-ui.cases(); assert.match(ctx.view.innerHTML,/ТРИУМФ/); assert.match(ctx.view.innerHTML,/ХИТ\\.ру/);
+ui.cases(); assert.ok(ctx.view.innerHTML.includes('ТРИУМФ')); assert.ok(ctx.view.innerHTML.includes('ХИТ.ру'));
 ui.caseScreen('hitru'); assert.match(ctx.view.innerHTML,/data-case-id="hitru"/);
-assert.doesNotMatch(ctx.view.innerHTML,/Triumph \\/ 100 моделей/);
+assert.equal(ctx.view.innerHTML.includes('Triumph / 100 моделей'), false);
 ctx.main(); assert.equal(ctx.state.brief.fromCase,'hitru'); assert.equal(ctx.state.brief.svc,'app'); assert.equal(ctx.route,'#/brief');
 ui.caseScreen('triumf'); assert.match(ctx.view.innerHTML,/triumf-1-catalog/);
 const dlg={innerHTML:'',addEventListener(){},showModal(){},close(){}}, dom={getElementById:()=>dlg,createElement:()=>dlg,body:{append(){}}};
