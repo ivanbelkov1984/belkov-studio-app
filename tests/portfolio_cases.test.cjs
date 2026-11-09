@@ -1,0 +1,32 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.resolve(__dirname, '..');
+const src = fs.readFileSync(path.join(root, 'app/app.js'), 'utf8');
+const D = JSON.parse(fs.readFileSync(path.join(root, 'app/data/content.json'), 'utf8'));
+assert.deepEqual(D.cases.map(c => c.id), ['triumf','hitru']);
+assert.equal(D.cases[0].demo, 'https://t.me/TriumphMoto_bot/catalog?startapp=src_studio');
+assert.equal(D.cases[1].demo, 'https://music.aiservicesint.ru/player');
+assert.match(D.cases[1].galleryNote, /дизайн-референсы/);
+assert.doesNotMatch(src, /D\\.cases\\[0\\]/);
+for (const c of D.cases) for (const [file] of c.gallery || []) {
+  const f = path.join(root, 'app', file);
+  assert.ok(fs.existsSync(f), 'missing '+file);
+  assert.ok(fs.statSync(f).size > 1024, 'empty '+file);
+}
+const section = src.slice(src.indexOf('function cases() {'), src.indexOf('/* ---------- Калькулятор', src.indexOf('function cases() {')));
+const ctx = {D, view:{innerHTML:''}, state:{brief:{}}, caseById:id=>D.cases.find(x=>x.id===id), esc:s=>String(s??''), tags:a=>a.join('|'), ic:()=>'', backBtn:()=>'', setMain:(label,fn)=>{ctx.main=fn}, go:url=>{ctx.route=url}};
+const ui = new Function('s','with(s){'+section+';return {cases,caseScreen}}')(ctx);
+ui.cases(); assert.match(ctx.view.innerHTML,/ТРИУМФ/); assert.match(ctx.view.innerHTML,/ХИТ\\.ру/);
+ui.caseScreen('hitru'); assert.match(ctx.view.innerHTML,/data-case-id="hitru"/);
+assert.doesNotMatch(ctx.view.innerHTML,/Triumph \\/ 100 моделей/);
+ctx.main(); assert.equal(ctx.state.brief.fromCase,'hitru'); assert.equal(ctx.state.brief.svc,'app'); assert.equal(ctx.route,'#/brief');
+ui.caseScreen('triumf'); assert.match(ctx.view.innerHTML,/triumf-1-catalog/);
+const dlg={innerHTML:'',addEventListener(){},showModal(){},close(){}}, dom={getElementById:()=>dlg,createElement:()=>dlg,body:{append(){}}};
+const zoomSection=src.slice(src.indexOf('function zoom(i, caseId) {'),src.indexOf('/* ---------- Заявка',src.indexOf('function zoom(i, caseId) {')));
+const zoom=new Function('s','with(s){'+zoomSection+';return zoom}')({...ctx,document:dom});
+zoom(0,'hitru'); assert.match(dlg.innerHTML,/hitru-01/);
+zoom(0,'triumf'); assert.match(dlg.innerHTML,/triumf-1/);
+assert.match(src,/src: briefSource/);
+console.log('PASS: 2 cases, original Triumph, scoped gallery, CTA/source, local imagery');
