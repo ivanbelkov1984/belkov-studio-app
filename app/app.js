@@ -413,8 +413,12 @@ function addPultTab() {
 
 /* ---------- Навигация ---------- */
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
+function resetCaseSourceOnNavigation(routeName) {
+  if (routeName !== 'brief') delete state.brief.fromCase;
+}
 function route() {
   const [a, b] = (location.hash || '#/').slice(2).split('/');
+  resetCaseSourceOnNavigation(a);
   const tab = ({ services: 'services', solutions: 'solutions', cases: 'cases', brief: 'brief', admin: 'admin', calc: 'services' })[a] || (a === 'faq' ? 'home' : 'home');
   document.querySelectorAll('.tabs a').forEach(x => x.dataset.tab === tab ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current'));
   const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'my', 'pay', 'privacy', 'terms', 'consent', 'docs', 'admin'].includes(a);
@@ -477,6 +481,7 @@ window.addEventListener('hashchange', route);
   [S, D, PR, L] = await Promise.all(['data/services.json', 'data/content.json', 'data/pricing.json', 'data/legal.json'].map(u => fetch(u).then(r => r.json())));
   window.__step = 'draft';
   Object.assign(state.brief, (await load('brief')) || {});
+  delete state.brief.fromCase; // case attribution must come from a fresh explicit case CTA
   window.__step = 'status';
   bindBack(); bindMain();
   window.addEventListener('offline', () => toast('Нет связи с интернетом. Черновик заявки сохранён на устройстве.', 8000));
