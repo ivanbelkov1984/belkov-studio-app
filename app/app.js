@@ -35,7 +35,7 @@ const checks = items => `<ul class="checks">${items.map(i => `<li>${ic('check')}
 const tags = list => `<div class="tags">${list.map(p => `<span class="tag">${esc(p)}</span>`).join('')}</div>`;
 
 let D = {}, S = {}, PR = {}, L = {};
-const state = { dir: 'all', plat: 'all', calc: { step: 0, type: null, plat: null, feats: [], urg: null }, brief: {} };
+const state = { dir: 'all', plat: 'all', calc: { step: 0, type: null, plat: null, feats: [], urg: null }, brief: {}, activeCase: null };
 let src = '';
 const srv = { leads: false, owner: false };
 let CFG = { blocks: {}, state: 'open' };   // управляемый из пульта конфиг (запасной вариант — вшитые данные)
@@ -241,7 +241,7 @@ function caseScreen(id) {
       ${c.maxDemo ? `<button class="btn btn-wide" type="button" data-link="${esc(c.maxDemo)}">Проверить в MAX ${ic("out")}</button>` : ""}
       <button class="btn btn-wide" type="button" data-share="case_${c.id}" data-share-text="Кейс: ${esc(c.title)}">${ic('share')} Поделиться</button></div>
     ${c.demoNote ? `<p class="note">${esc(c.demoNote)}</p>` : ""}`;
-  setMain("Хочу подобный проект", () => { state.brief.svc = "app"; state.brief.fromCase = c.id; if (!state.brief.task) state.brief.task = `Интересует проект по примеру «${c.title}».`; go("#/brief"); });
+  setMain("Хочу подобный проект", () => { state.brief.svc = "app"; state.activeCase = c.id; if (!state.brief.task) state.brief.task = `Интересует проект по примеру «${c.title}».`; go("#/brief"); });
 }
 
 /* ---------- Калькулятор ---------- */
@@ -327,8 +327,10 @@ function zoom(i, caseId) {
 /* ---------- Заявка ---------- */
 function brief() {
   const b = state.brief;
+  delete b.fromCase; // discard legacy persisted attribution from older versions
+  const activeCase = state.activeCase && caseById(state.activeCase);
   track('brief');
-  view.innerHTML = `${modeHtml()}<p class="eyebrow">Заявка</p><h1>Расскажите о проекте</h1><p class="lead">${b.fromCase && caseById(b.fromCase) ? `По примеру «${esc(caseById(b.fromCase).title)}». ` : ""}Мы подготовим сообщение — отправка в чат будет под вашим контролем.</p>
+  view.innerHTML = `${modeHtml()}<p class="eyebrow">Заявка</p><h1>Расскажите о проекте</h1><p class="lead">${activeCase ? `По примеру «${esc(activeCase.title)}». ` : ""}Мы подготовим сообщение — отправка в чат будет под вашим контролем.</p>
     <form class="form" data-brief novalidate>
       <div class="field"><label for="b-biz">Ваш бизнес</label><input id="b-biz" name="biz" placeholder="Например, кофейня" value="${esc(b.biz || '')}"></div>
       <div class="field"><label for="b-svc">Что нужно</label><select id="b-svc" name="svc"><option value="">Пока не знаю — нужна консультация</option>${S.services.map(s => `<option value="${s.id}"${s.id === b.svc ? ' selected' : ''}>${esc(s.name)} (${priceTxt(s.priceFrom, s.monthly)})</option>`).join('')}</select></div>
@@ -359,7 +361,7 @@ async function sendBrief() {
   if (!ok.checked) { okErr.hidden = false; ok.focus(); haptic('heavy'); return; }
   okErr.hidden = true;
   const s = svcById(f.svc);
-  const fromCase = state.brief.fromCase && caseById(state.brief.fromCase) ? `case_${state.brief.fromCase}` : "";
+  const fromCase = state.activeCase && caseById(state.activeCase) ? `case_${state.activeCase}` : "";
   const briefSource = [src, fromCase].filter(Boolean).join("__").slice(0, 64);
   const lines = [`Здравствуйте! Заявка в ${C.studio}.`];
   if (f.biz.trim()) lines.push(`Бизнес: ${f.biz.trim()}`);
@@ -414,7 +416,7 @@ function addPultTab() {
 /* ---------- Навигация ---------- */
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
 function resetCaseSourceOnNavigation(routeName) {
-  if (routeName !== 'brief') delete state.brief.fromCase;
+  if (routeName !== 'brief') state.activeCase = null;
 }
 function route() {
   const [a, b] = (location.hash || '#/').slice(2).split('/');
@@ -481,7 +483,6 @@ window.addEventListener('hashchange', route);
   [S, D, PR, L] = await Promise.all(['data/services.json', 'data/content.json', 'data/pricing.json', 'data/legal.json'].map(u => fetch(u).then(r => r.json())));
   window.__step = 'draft';
   Object.assign(state.brief, (await load('brief')) || {});
-  delete state.brief.fromCase; // case attribution must come from a fresh explicit case CTA
   window.__step = 'status';
   bindBack(); bindMain();
   window.addEventListener('offline', () => toast('Нет связи с интернетом. Черновик заявки сохранён на устройстве.', 8000));
