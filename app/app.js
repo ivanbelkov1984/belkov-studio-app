@@ -221,6 +221,7 @@ function solutions() {
 
 function cases() {
   view.innerHTML = `<p class="eyebrow">Реальные проекты</p><h1>Кейсы</h1><p class="lead">Показываем задачи, интерфейс и то, что сделано.</p>
+    <div class="chips" aria-label="Быстрый выбор кейса">${D.cases.map(c => `<a class="tag" href="#/cases/${esc(c.id)}" style="color:var(--text);text-decoration:none">${esc(c.title)}</a>`).join("")}</div>
     <div class="grid">${D.cases.map(c => `<a class="card link" href="#/cases/${c.id}"><div class="cover"><img src="${esc(c.cover)}" alt="${esc(c.coverAlt)}" loading="lazy"><span class="label">${esc(c.coverLabel || c.title)}</span></div>${tags(c.platforms)}<h3 style="margin-top:10px">${esc(c.title)}</h3><p class="meta">${esc(c.task)}</p><span class="more">Открыть кейс ${ic('out')}</span></a>`).join('')}
     </div>`;
   setMain('Обсудить проект', () => go('#/brief'));
