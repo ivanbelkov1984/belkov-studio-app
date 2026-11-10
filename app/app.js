@@ -242,7 +242,16 @@ function caseScreen(id) {
       ${c.maxDemo ? `<button class="btn btn-wide" type="button" data-link="${esc(c.maxDemo)}">Проверить в MAX ${ic("out")}</button>` : ""}
       <button class="btn btn-wide" type="button" data-share="case_${c.id}" data-share-text="Кейс: ${esc(c.title)}">${ic('share')} Поделиться</button></div>
     ${c.demoNote ? `<p class="note">${esc(c.demoNote)}</p>` : ""}`;
-  setMain("Хочу подобный проект", () => { state.brief.svc = "app"; state.activeCase = c.id; if (!state.brief.task) state.brief.task = `Интересует проект по примеру «${c.title}».`; go("#/brief"); });
+  setMain("Хочу подобный проект", () => {
+    state.brief.svc = "app";
+    state.activeCase = c.id;
+    const suggestedTask = `Интересует проект по примеру «${c.title}».`;
+    // Replace a previous case's automatic prompt, but preserve any user-written task.
+    if (!state.brief.task || /^Интересует проект по примеру «[^»]+»\.$/.test(state.brief.task)) {
+      state.brief.task = suggestedTask;
+    }
+    go("#/brief");
+  });
 }
 
 /* ---------- Калькулятор ---------- */
@@ -417,7 +426,8 @@ function addPultTab() {
 /* ---------- Навигация ---------- */
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
 function resetCaseSourceOnNavigation(routeName) {
-  if (routeName !== 'brief') state.activeCase = null;
+  // Reading legal pages from the brief must not lose the originating case.
+  if (!['brief', 'consent', 'privacy', 'terms'].includes(routeName)) state.activeCase = null;
 }
 function route() {
   const [a, b] = (location.hash || '#/').slice(2).split('/');

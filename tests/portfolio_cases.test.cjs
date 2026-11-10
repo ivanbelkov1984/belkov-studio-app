@@ -24,7 +24,11 @@ assert.match(ctx.view.innerHTML, /href="#\/cases\/hitru"/);
 ui.caseScreen('hitru'); assert.match(ctx.view.innerHTML,/data-case-id="hitru"/);
 assert.equal(ctx.view.innerHTML.includes('Triumph / 100 моделей'), false);
 ctx.main(); assert.equal(ctx.state.activeCase,'hitru'); assert.equal(ctx.state.brief.fromCase, undefined); assert.equal(ctx.state.brief.svc,'app'); assert.equal(ctx.route,'#/brief');
+assert.equal(ctx.state.brief.task,'Интересует проект по примеру «ХИТ.ру — музыкальный плеер».');
 ui.caseScreen('triumf'); assert.match(ctx.view.innerHTML,/triumf-1-catalog/);
+ctx.main(); assert.equal(ctx.state.brief.task,'Интересует проект по примеру «Мотосалон ТРИУМФ».');
+ctx.state.brief.task = 'Индивидуальная задача клиента';
+ui.caseScreen('hitru'); ctx.main(); assert.equal(ctx.state.brief.task,'Индивидуальная задача клиента');
 const dlg={innerHTML:'',addEventListener(){},showModal(){},close(){}}, dom={getElementById:()=>dlg,createElement:()=>dlg,body:{append(){}}};
 const zoomSection=src.slice(src.indexOf('function zoom(i, caseId) {'),src.indexOf('/* ---------- Заявка',src.indexOf('function zoom(i, caseId) {')));
 const zoom=new Function('s','with(s){'+zoomSection+';return zoom}')({...ctx,document:dom});
@@ -38,6 +42,9 @@ assert.ok(navSection.includes('state.activeCase = null'));
 const resetCaseSource = new Function('state', navSection + ';return resetCaseSourceOnNavigation;')(ctx.state);
 ctx.state.activeCase = 'hitru';
 resetCaseSource('brief'); assert.equal(ctx.state.activeCase, 'hitru');
+for (const page of ['consent', 'privacy', 'terms']) {
+  resetCaseSource(page); assert.equal(ctx.state.activeCase, 'hitru', 'attribution survives '+page);
+}
 resetCaseSource('services'); assert.equal(ctx.state.activeCase, null);
 assert.match(src, /delete b\.fromCase/); assert.ok(!src.includes('state.brief.fromCase'));
 assert.ok(src.includes('const fromCase = state.activeCase'), 'source must only reflect live CTA');
