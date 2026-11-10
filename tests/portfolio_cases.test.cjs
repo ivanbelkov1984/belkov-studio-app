@@ -29,4 +29,13 @@ const zoom=new Function('s','with(s){'+zoomSection+';return zoom}')({...ctx,docu
 zoom(0,'hitru'); assert.match(dlg.innerHTML,/hitru-01/);
 zoom(0,'triumf'); assert.match(dlg.innerHTML,/triumf-1/);
 assert.match(src,/src: briefSource/);
+const scale = D.cases[1].blocks.find(b => b.h === 'Возможности масштабирования');
+assert.ok(scale && /будущей разработки/.test(scale.t), 'future features must not be sold as shipped');
+const navSection = src.slice(src.indexOf('function resetCaseSourceOnNavigation('), src.indexOf('function route() {'));
+assert.ok(navSection.includes('delete state.brief.fromCase'));
+const resetCaseSource = new Function('state', navSection + ';return resetCaseSourceOnNavigation;')(ctx.state);
+ctx.state.brief.fromCase = 'hitru';
+resetCaseSource('brief'); assert.equal(ctx.state.brief.fromCase, 'hitru');
+resetCaseSource('services'); assert.equal(ctx.state.brief.fromCase, undefined);
+assert.match(src, /Object\.assign\(state\.brief, \(await load\('brief'\)\) \|\| \{\}\);\s*delete state\.brief\.fromCase/);
 console.log('PASS: 2 cases, original Triumph, scoped gallery, CTA/source, local imagery');
