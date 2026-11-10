@@ -35,7 +35,7 @@ const checks = items => `<ul class="checks">${items.map(i => `<li>${ic('check')}
 const tags = list => `<div class="tags">${list.map(p => `<span class="tag">${esc(p)}</span>`).join('')}</div>`;
 
 let D = {}, S = {}, PR = {}, L = {};
-const state = { dir: 'all', plat: 'all', calc: { step: 0, type: null, plat: null, feats: [], urg: null }, brief: {} };
+const state = { dir: 'all', plat: 'all', calc: { step: 0, type: null, plat: null, feats: [], urg: null }, brief: {}, activeCase: null };
 let src = '';
 const srv = { leads: false, owner: false };
 let CFG = { blocks: {}, state: 'open' };   // управляемый из пульта конфиг (запасной вариант — вшитые данные)
@@ -125,7 +125,7 @@ const priceTxt = (n, monthly) => `от ${rub(n)}${monthly ? '/мес' : ''}`;
 
 /* ---------- Экраны ---------- */
 function home() {
-  const c = D.cases[0];
+  const featuredCases = (D.cases || []).slice(0, 2);
   const dirs = [['bot', 'bot', 'Боты'], ['app', 'app', 'Мини-приложения'], ['smm', 'smm', 'Продвижение']];
   const ben = [['doc', 'Договор и чек', 'самозанятого'], ['shield', 'Данные по 152-ФЗ', 'политика открыта'], ['globe', 'Telegram и MAX', 'одно мини-приложение'], ['clock', '30 дней', 'исправление ошибок']];
   view.innerHTML = `<p class="eyebrow">Цифровые решения для бизнеса</p>
@@ -142,8 +142,8 @@ function home() {
     <h2 class="sec" style="margin-top:0">Всё в одних руках</h2>
     <p class="lead">Не набор подрядчиков, а одна команда решений.</p>
     <div class="grid two">${ben.map(([i, a, b]) => `<div class="tile">${ic(i)}<div><b>${a}</b><br><span>${b}</span></div></div>`).join('')}</div>
-    <h2 class="sec">Кейс студии <a class="more" style="margin:0" href="#/cases">Все кейсы ${ic('out')}</a></h2>
-    <a class="card link" href="#/cases/${c.id}"><div class="cover"><img src="${esc(c.cover)}" alt="${esc(c.coverAlt)}" loading="lazy"><span class="label">Triumph / каталог</span></div><h3>${esc(c.title)}</h3><p class="meta">${esc(c.task)}</p></a>
+    <h2 class="sec">Проекты студии <a class="more" style="margin:0" href="#/cases">Все кейсы ${ic('out')}</a></h2>
+    <div class="grid">${featuredCases.map(c => `<a class="card link" href="#/cases/${esc(c.id)}"><div class="cover"><img src="${esc(c.cover)}" alt="${esc(c.coverAlt)}" loading="lazy"><span class="label">${esc(c.coverLabel || c.title)}</span></div><h3>${esc(c.title)}</h3><p class="meta">${esc(c.task)}</p><span class="more">Посмотреть кейс ${ic('out')}</span></a>`).join('')}</div>
     <p class="eyebrow" style="margin-top:28px">Прозрачный процесс</p>
     <h2 class="sec" style="margin-top:0">Как работаем</h2>
     <ol class="steps">${D.process.map((s, i) => { const [h, ...r] = s.split(' — '); return `<li><span class="n">0${i + 1}</span><div><b>${esc(h)}</b>${r.length ? `<span>${esc(r.join(' — '))}</span>` : ''}</div></li>`; }).join('')}</ol>
@@ -221,24 +221,37 @@ function solutions() {
 
 function cases() {
   view.innerHTML = `<p class="eyebrow">Реальные проекты</p><h1>Кейсы</h1><p class="lead">Показываем задачи, интерфейс и то, что сделано.</p>
-    <div class="grid">${D.cases.map(c => `<a class="card link" href="#/cases/${c.id}"><div class="cover"><img src="${esc(c.cover)}" alt="${esc(c.coverAlt)}" loading="lazy"><span class="label">Triumph / Mini App</span></div>${tags(c.platforms)}<h3 style="margin-top:10px">${esc(c.title)}</h3><p class="meta">${esc(c.task)}</p><span class="more">Открыть кейс ${ic('out')}</span></a>`).join('')}
-      <div class="card"><span class="badge-pop">Скоро</span><h3>Новый проект</h3><p class="meta">Кейс появится после разрешения клиента на публикацию.</p></div></div>`;
+    <div class="chips" aria-label="Быстрый выбор кейса">${D.cases.map(c => `<a class="tag" href="#/cases/${esc(c.id)}" style="color:var(--text);text-decoration:none">${esc(c.title)}</a>`).join("")}</div>
+    <div class="grid">${D.cases.map(c => `<a class="card link" href="#/cases/${c.id}"><div class="cover"><img src="${esc(c.cover)}" alt="${esc(c.coverAlt)}" loading="lazy"><span class="label">${esc(c.coverLabel || c.title)}</span></div>${tags(c.platforms)}<h3 style="margin-top:10px">${esc(c.title)}</h3><p class="meta">${esc(c.task)}</p><span class="more">Открыть кейс ${ic('out')}</span></a>`).join('')}
+    </div>`;
   setMain('Обсудить проект', () => go('#/brief'));
 }
 
 function caseScreen(id) {
   const c = caseById(id); if (!c) return go('#/cases');
-  view.innerHTML = `${backBtn('Кейсы')}<p class="eyebrow">Кейс / мототехника</p><h1>${esc(c.title)}</h1><p class="lead">Мини-приложение-каталог и сервисный контур для мотосалона.</p>${tags(c.platforms.concat(['Мини-приложение']))}
-    <div class="cover" style="margin-top:14px"><img src="${esc(c.cover)}" alt="${esc(c.coverAlt)}"><span class="label">Triumph / 100 моделей</span></div>
+  view.innerHTML = `${backBtn('Кейсы')}<p class="eyebrow">${esc(c.category || "Кейс / цифровой продукт")}</p><h1>${esc(c.title)}</h1><p class="lead">${esc(c.lead || c.task)}</p>${tags(c.platforms.concat(['Мини-приложение']))}
+    <div class="cover" style="margin-top:14px"><img src="${esc(c.cover)}" alt="${esc(c.coverAlt)}"><span class="label">${esc(c.coverLabel || c.title)}</span></div>
     <h2 class="sec">Задача</h2><p>${esc(c.task)}</p>
     <h2 class="sec">Что сделали</h2><ol class="num-list">${c.blocks.map(b => `<li><div><b>${esc(b.h)}</b><span>${esc(b.t)}</span></div></li>`).join('')}</ol>
+    ${c.galleryNote ? `<p class="note">${esc(c.galleryNote)}</p>` : ""}
     ${c.gallery ? `<p class="eyebrow" style="margin-top:28px">Пример интерфейса</p><h2 class="sec" style="margin-top:0">Экран за экраном</h2>
-    <div class="chips scroll gallery" role="list">${c.gallery.map(([src, cap], i) => `<button class="shot" type="button" data-zoom="${i}" role="listitem" aria-label="Увеличить: ${esc(cap)}"><img src="${esc(src)}" alt="${esc(cap)}" width="160" height="346" loading="lazy"><span>${esc(cap)}</span></button>`).join('')}</div>` : ''}
+    <div class="chips scroll gallery" role="list">${c.gallery.map(([src, cap], i) => `<button class="shot" type="button" data-zoom="${i}" data-case-id="${esc(c.id)}" role="listitem" aria-label="Увеличить: ${esc(cap)}"><img src="${esc(src)}" alt="${esc(cap)}" width="160" height="346" loading="lazy"><span>${esc(cap)}</span></button>`).join('')}</div>` : ''}
     <h2 class="sec">Стек</h2>${tags(c.stack)}
-    <h2 class="sec">Результат</h2><div class="card"><p class="eyebrow" style="margin:0 0 6px">Данные после запуска</p><p class="meta">${esc(c.result)}</p></div><p class="note">${esc(c.rights || '')}</p>
+    <h2 class="sec">Результат</h2><div class="card"><p class="eyebrow" style="margin:0 0 6px">${esc(c.resultLabel || "Данные после запуска")}</p><p class="meta">${esc(c.result)}</p></div><p class="note">${esc(c.rights || '')}</p>
     <div class="actions">${c.demo ? `<button class="btn btn-wide" type="button" data-link="${esc(c.demo)}">Открыть демо ${ic('out')}</button>` : ''}
-      <button class="btn btn-wide" type="button" data-share="case_${c.id}" data-share-text="Кейс: ${esc(c.title)}">${ic('share')} Поделиться</button></div>`;
-  setMain('Хочу так же', () => { state.brief.svc = 'app'; go('#/brief'); });
+      ${c.maxDemo ? `<button class="btn btn-wide" type="button" data-link="${esc(c.maxDemo)}">Проверить в MAX ${ic("out")}</button>` : ""}
+      <button class="btn btn-wide" type="button" data-share="case_${c.id}" data-share-text="Кейс: ${esc(c.title)}">${ic('share')} Поделиться</button></div>
+    ${c.demoNote ? `<p class="note">${esc(c.demoNote)}</p>` : ""}`;
+  setMain("Хочу подобный проект", () => {
+    state.brief.svc = "app";
+    state.activeCase = c.id;
+    const suggestedTask = `Интересует проект по примеру «${c.title}».`;
+    // Replace a previous case's automatic prompt, but preserve any user-written task.
+    if (!state.brief.task || /^Интересует проект по примеру «[^»]+»\.$/.test(state.brief.task)) {
+      state.brief.task = suggestedTask;
+    }
+    go("#/brief");
+  });
 }
 
 /* ---------- Калькулятор ---------- */
@@ -311,8 +324,10 @@ function docs() {
     <a class="card" href="#/privacy"><h3>Политика обработки персональных данных</h3><p class="meta">Какие данные, зачем и как отозвать согласие (152-ФЗ).</p></a></div>${footer()}`;
   setMain(null);
 }
-function zoom(i) {
-  const [src, cap] = D.cases[0].gallery[i];
+function zoom(i, caseId) {
+  const gallery = caseById(caseId)?.gallery;
+  if (!Array.isArray(gallery) || !gallery[i]) return;
+  const [src, cap] = gallery[i];
   let d = document.getElementById('zoom');
   if (!d) { d = document.createElement('dialog'); d.id = 'zoom'; d.className = 'zoom'; document.body.append(d); d.addEventListener('click', () => d.close()); }
   d.innerHTML = `<img src="${esc(src)}" alt="${esc(cap)}"><p>${esc(cap)} · нажмите, чтобы закрыть</p>`;
@@ -322,8 +337,10 @@ function zoom(i) {
 /* ---------- Заявка ---------- */
 function brief() {
   const b = state.brief;
+  delete b.fromCase; // discard legacy persisted attribution from older versions
+  const activeCase = state.activeCase && caseById(state.activeCase);
   track('brief');
-  view.innerHTML = `${modeHtml()}<p class="eyebrow">Заявка</p><h1>Расскажите о проекте</h1><p class="lead">Мы подготовим сообщение — отправка в чат будет под вашим контролем.</p>
+  view.innerHTML = `${modeHtml()}<p class="eyebrow">Заявка</p><h1>Расскажите о проекте</h1><p class="lead">${activeCase ? `По примеру «${esc(activeCase.title)}». ` : ""}Мы подготовим сообщение — отправка в чат будет под вашим контролем.</p>
     <form class="form" data-brief novalidate>
       <div class="field"><label for="b-biz">Ваш бизнес</label><input id="b-biz" name="biz" placeholder="Например, кофейня" value="${esc(b.biz || '')}"></div>
       <div class="field"><label for="b-svc">Что нужно</label><select id="b-svc" name="svc"><option value="">Пока не знаю — нужна консультация</option>${S.services.map(s => `<option value="${s.id}"${s.id === b.svc ? ' selected' : ''}>${esc(s.name)} (${priceTxt(s.priceFrom, s.monthly)})</option>`).join('')}</select></div>
@@ -354,6 +371,8 @@ async function sendBrief() {
   if (!ok.checked) { okErr.hidden = false; ok.focus(); haptic('heavy'); return; }
   okErr.hidden = true;
   const s = svcById(f.svc);
+  const fromCase = state.activeCase && caseById(state.activeCase) ? `case_${state.activeCase}` : "";
+  const briefSource = [src, fromCase].filter(Boolean).join("__").slice(0, 64);
   const lines = [`Здравствуйте! Заявка в ${C.studio}.`];
   if (f.biz.trim()) lines.push(`Бизнес: ${f.biz.trim()}`);
   lines.push(`Нужно: ${s ? s.name : 'консультация'}`, `Задача: ${f.task.trim()}`);
@@ -361,14 +380,14 @@ async function sendBrief() {
   lines.push(`Срок: ${f.when}`);
   if (state.brief.calc) lines.push(state.brief.calc);
   if (f.promo && f.promo.trim()) lines.push(`Промокод: ${f.promo.trim().toUpperCase()}`);
-  if (src) lines.push(`Источник: ${src}`);
+  if (briefSource) lines.push(`Источник: ${briefSource}`);
   lines.push(`Площадка: ${P.kind}`);
   lastText = lines.join('\n');
   if (srv.leads) {
     if (P.kind === 'web' && !String(f.contact || '').trim()) { toast('Укажите, как с вами связаться'); form.querySelector('#b-contact')?.focus(); return; }
     try {
       const r = await fetch('/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Platform': P.kind, 'X-Init-Data': P.sdk?.initData || '' },
-        body: JSON.stringify({ biz: f.biz, svc: f.svc, task: f.task, budget: /^Выбрать/.test(f.budget) ? '' : f.budget, when: f.when, calc: state.brief.calc || '', contact: f.contact || '', promo: (f.promo || '').trim(), src, consent: true }) });
+        body: JSON.stringify({ biz: f.biz, svc: f.svc, task: f.task, budget: /^Выбрать/.test(f.budget) ? '' : f.budget, when: f.when, calc: state.brief.calc || '', contact: f.contact || '', promo: (f.promo || '').trim(), src: briefSource, consent: true }) });
       const j = await r.json().catch(() => ({}));
       if (j.stored) { track('lead'); hapticOk(); return ready(true); }
       if (r.status !== 202) toast(j.error || 'Не удалось отправить, отправьте текст в чат.');
@@ -406,8 +425,13 @@ function addPultTab() {
 
 /* ---------- Навигация ---------- */
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
+function resetCaseSourceOnNavigation(routeName) {
+  // Reading legal pages from the brief must not lose the originating case.
+  if (!['brief', 'consent', 'privacy', 'terms'].includes(routeName)) state.activeCase = null;
+}
 function route() {
   const [a, b] = (location.hash || '#/').slice(2).split('/');
+  resetCaseSourceOnNavigation(a);
   const tab = ({ services: 'services', solutions: 'solutions', cases: 'cases', brief: 'brief', admin: 'admin', calc: 'services' })[a] || (a === 'faq' ? 'home' : 'home');
   document.querySelectorAll('.tabs a').forEach(x => x.dataset.tab === tab ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current'));
   const deep = (a === 'services' && b) || (a === 'cases' && b) || ['calc', 'faq', 'my', 'pay', 'privacy', 'terms', 'consent', 'docs', 'admin'].includes(a);
@@ -433,7 +457,7 @@ function back() {
 }
 
 document.addEventListener('click', async e => {
-  const z = e.target.closest('[data-zoom]'); if (z) return zoom(+z.dataset.zoom);
+  const z = e.target.closest('[data-zoom]'); if (z) return zoom(+z.dataset.zoom, z.dataset.caseId);
   const pc = e.target.closest('[data-promo-check]');
   if (pc) {
     const code = ($('#b-promo').value || '').trim(); const out = $('#b-promo-res'); if (!code) { out.textContent = ''; return; }

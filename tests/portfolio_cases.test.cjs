@@ -1,0 +1,51 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.resolve(__dirname, '..');
+const src = fs.readFileSync(path.join(root, 'app/app.js'), 'utf8');
+const D = JSON.parse(fs.readFileSync(path.join(root, 'app/data/content.json'), 'utf8'));
+assert.deepEqual(D.cases.map(c => c.id), ['triumf','hitru']);
+assert.equal(D.cases[0].demo, 'https://t.me/TriumphMoto_bot/catalog?startapp=src_studio');
+assert.equal(D.cases[1].demo, 'https://music.aiservicesint.ru/player');
+assert.match(D.cases[1].galleryNote, /дизайн-референсы/);
+assert.equal(src.includes("D.cases[0]"), false);
+for (const c of D.cases) for (const [file] of c.gallery || []) {
+  const f = path.join(root, 'app', file);
+  assert.ok(fs.existsSync(f), 'missing '+file);
+  assert.ok(fs.statSync(f).size > 1024, 'empty '+file);
+}
+const section = src.slice(src.indexOf('function cases() {'), src.indexOf('/* ---------- Калькулятор', src.indexOf('function cases() {')));
+const ctx = {D, view:{innerHTML:''}, state:{brief:{}, activeCase:null}, caseById:id=>D.cases.find(x=>x.id===id), esc:s=>String(s??''), tags:a=>a.join('|'), ic:()=>'', backBtn:()=>'', setMain:(label,fn)=>{ctx.main=fn}, go:url=>{ctx.route=url}};
+const ui = new Function('s','with(s){'+section+';return {cases,caseScreen}}')(ctx);
+ui.cases(); assert.ok(ctx.view.innerHTML.includes('ТРИУМФ')); assert.ok(ctx.view.innerHTML.includes('ХИТ.ру'));
+assert.match(ctx.view.innerHTML, /Быстрый выбор кейса/);
+assert.match(ctx.view.innerHTML, /href="#\/cases\/hitru"/);
+ui.caseScreen('hitru'); assert.match(ctx.view.innerHTML,/data-case-id="hitru"/);
+assert.equal(ctx.view.innerHTML.includes('Triumph / 100 моделей'), false);
+ctx.main(); assert.equal(ctx.state.activeCase,'hitru'); assert.equal(ctx.state.brief.fromCase, undefined); assert.equal(ctx.state.brief.svc,'app'); assert.equal(ctx.route,'#/brief');
+assert.equal(ctx.state.brief.task,'Интересует проект по примеру «ХИТ.ру — музыкальный плеер».');
+ui.caseScreen('triumf'); assert.match(ctx.view.innerHTML,/triumf-1-catalog/);
+ctx.main(); assert.equal(ctx.state.brief.task,'Интересует проект по примеру «Мотосалон ТРИУМФ».');
+ctx.state.brief.task = 'Индивидуальная задача клиента';
+ui.caseScreen('hitru'); ctx.main(); assert.equal(ctx.state.brief.task,'Индивидуальная задача клиента');
+const dlg={innerHTML:'',addEventListener(){},showModal(){},close(){}}, dom={getElementById:()=>dlg,createElement:()=>dlg,body:{append(){}}};
+const zoomSection=src.slice(src.indexOf('function zoom(i, caseId) {'),src.indexOf('/* ---------- Заявка',src.indexOf('function zoom(i, caseId) {')));
+const zoom=new Function('s','with(s){'+zoomSection+';return zoom}')({...ctx,document:dom});
+zoom(0,'hitru'); assert.match(dlg.innerHTML,/hitru-01/);
+zoom(0,'triumf'); assert.match(dlg.innerHTML,/triumf-1/);
+assert.match(src,/src: briefSource/);
+const scale = D.cases[1].blocks.find(b => b.h === 'Возможности масштабирования');
+assert.ok(scale && /будущей разработки/.test(scale.t), 'future features must not be sold as shipped');
+const navSection = src.slice(src.indexOf('function resetCaseSourceOnNavigation('), src.indexOf('function route() {'));
+assert.ok(navSection.includes('state.activeCase = null'));
+const resetCaseSource = new Function('state', navSection + ';return resetCaseSourceOnNavigation;')(ctx.state);
+ctx.state.activeCase = 'hitru';
+resetCaseSource('brief'); assert.equal(ctx.state.activeCase, 'hitru');
+for (const page of ['consent', 'privacy', 'terms']) {
+  resetCaseSource(page); assert.equal(ctx.state.activeCase, 'hitru', 'attribution survives '+page);
+}
+resetCaseSource('services'); assert.equal(ctx.state.activeCase, null);
+assert.match(src, /delete b\.fromCase/); assert.ok(!src.includes('state.brief.fromCase'));
+assert.ok(src.includes('const fromCase = state.activeCase'), 'source must only reflect live CTA');
+console.log('PASS: 2 cases, original Triumph, scoped gallery, CTA/source, local imagery');
