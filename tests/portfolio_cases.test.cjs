@@ -19,6 +19,8 @@ const section = src.slice(src.indexOf('function cases() {'), src.indexOf('/* ---
 const ctx = {D, view:{innerHTML:''}, state:{brief:{}, activeCase:null}, caseById:id=>D.cases.find(x=>x.id===id), esc:s=>String(s??''), tags:a=>a.join('|'), ic:()=>'', backBtn:()=>'', setMain:(label,fn)=>{ctx.main=fn}, go:url=>{ctx.route=url}};
 const ui = new Function('s','with(s){'+section+';return {cases,caseScreen}}')(ctx);
 ui.cases(); assert.ok(ctx.view.innerHTML.includes('ТРИУМФ')); assert.ok(ctx.view.innerHTML.includes('ХИТ.ру'));
+assert.match(ctx.view.innerHTML, /Быстрый выбор кейса/);
+assert.match(ctx.view.innerHTML, /href="#\/cases\/hitru"/);
 ui.caseScreen('hitru'); assert.match(ctx.view.innerHTML,/data-case-id="hitru"/);
 assert.equal(ctx.view.innerHTML.includes('Triumph / 100 моделей'), false);
 ctx.main(); assert.equal(ctx.state.activeCase,'hitru'); assert.equal(ctx.state.brief.fromCase, undefined); assert.equal(ctx.state.brief.svc,'app'); assert.equal(ctx.route,'#/brief');
